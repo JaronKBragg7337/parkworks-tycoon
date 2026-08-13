@@ -57,6 +57,7 @@ export class PlacementSystem {
   private previewModel: Object3D | null = null;
   private rotation = 0;
   private valid = false;
+  private positionPinned = false;
   private placedCounter = 1;
   private pointerWorld: Vec2 = { x: 0, z: 0 };
 
@@ -73,11 +74,20 @@ export class PlacementSystem {
     return this.activeKind !== null;
   }
 
+  get position(): Readonly<Vec2> {
+    return { ...this.pointerWorld };
+  }
+
+  get pinned(): boolean {
+    return this.positionPinned;
+  }
+
   begin(kind: PlaceableKind): void {
     this.cancel(false);
     const spec = getPlaceableSpec(kind);
     this.activeKind = kind;
     this.activeSpec = spec;
+    this.positionPinned = false;
     this.rotation = 0;
     const previewModel = this.assetFactory.createPlaceable(kind);
     this.previewModel = previewModel;
@@ -88,12 +98,12 @@ export class PlacementSystem {
     this.updateValidity([]);
   }
 
-  updatePointer(clientX: number, clientY: number, camera: Camera, placed: readonly PlacedObject[]): void {
-    if (!this.active) return;
+  updatePointer(clientX: number, clientY: number, camera: Camera, placed: readonly PlacedObject[]): boolean {
+    if (!this.active) return false;
     this.pointer.x = (clientX / window.innerWidth) * 2 - 1;
     this.pointer.y = -(clientY / window.innerHeight) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, camera);
-    if (!this.raycaster.ray.intersectPlane(this.groundPlane, this.hit)) return;
+    if (!this.raycaster.ray.intersectPlane(this.groundPlane, this.hit)) return false;
     const footprint = this.activeSpec ? this.rotatedFootprint(this.activeSpec) : [1, 1] as const;
     const offsetX = footprint[0] % 2 === 0 ? 0.5 : 0;
     const offsetZ = footprint[1] % 2 === 0 ? 0.5 : 0;
@@ -103,6 +113,14 @@ export class PlacementSystem {
     };
     this.previewRoot.position.set(this.pointerWorld.x, 0.04, this.pointerWorld.z);
     this.updateValidity(placed);
+    return true;
+  }
+
+  pinPosition(placed: readonly PlacedObject[]): boolean {
+    if (!this.active) return false;
+    this.positionPinned = true;
+    this.updateValidity(placed);
+    return true;
   }
 
   rotate(placed: readonly PlacedObject[]): void {
@@ -123,7 +141,7 @@ export class PlacementSystem {
   }
 
   confirm(placed: readonly PlacedObject[]): PlacementResult | null {
-    if (!this.activeKind || !this.activeSpec) return null;
+    if (!this.activeKind || !this.activeSpec || !this.positionPinned) return null;
     this.updateValidity(placed);
     if (!this.valid) return null;
 
@@ -157,6 +175,7 @@ export class PlacementSystem {
     this.previewRoot.visible = false;
     this.previewRoot.rotation.y = 0;
     this.valid = false;
+    this.positionPinned = false;
     if (notify) this.callbacks.onCancelled();
   }
 
@@ -210,7 +229,13 @@ export class PlacementSystem {
     const color = !this.valid ? 0xff6b5d : connected ? 0x51d9a3 : 0xf0b55a;
     this.footprintMaterial.color.setHex(color);
     this.setPreviewColor(this.previewModel, new Color(color));
-    this.callbacks.onPreviewChanged(validation, { ...this.pointerWorld }, this.rotation);
+    this.callbacks.onPreviewChanged({
+      ...validation,
+      valid: validation.valid && this.positionPinned,
+      message: !this.positionPinned && validation.valid
+        ? 'Click a plot to lock this location'
+        : validation.message,
+    }, { ...this.pointerWorld }, this.rotation);
   }
 
   private rotatedFootprint(spec: PlaceableSpec, rotation = this.rotation): readonly [number, number] {

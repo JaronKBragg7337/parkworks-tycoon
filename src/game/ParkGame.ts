@@ -36,6 +36,11 @@ import {
 import { InfrastructureBuilder, type InfrastructureTool } from './InfrastructureBuilder';
 import { ParkInfrastructureView } from './ParkInfrastructureView';
 import { PlacementSystem } from './PlacementSystem';
+import {
+  INITIAL_PLACEMENT_POINTER_STATE,
+  reducePlacementPointer,
+  type PlacementPointerState,
+} from './placementPointerState';
 
 interface GuestVisual {
   object: Object3D;
@@ -87,6 +92,7 @@ export class ParkGame {
   private cameraMode: CameraMode = 'follow';
   private activePlaceable: PlaceableKind | null = null;
   private drawingSurface = false;
+  private placementPointer: PlacementPointerState = { ...INITIAL_PLACEMENT_POINTER_STATE };
   private lastStatsUiUpdate = 0;
   private isPaused = false;
 
@@ -280,6 +286,7 @@ export class ParkGame {
   private beginPlacement(kind: PlaceableKind): void {
     if (!this.simulation.purchase(kind)) return;
     this.activePlaceable = kind;
+    this.placementPointer = reducePlacementPointer(this.placementPointer, { type: 'begin' }).state;
     this.mode = 'placing';
     this.applyInputState();
     this.infrastructureView.setLandMode(false);
@@ -287,14 +294,20 @@ export class ParkGame {
     this.applySimulationState();
     this.placement.begin(kind);
     this.placement.updatePointer(window.innerWidth / 2, window.innerHeight / 2, this.camera, this.placedObjects);
+    this.exposePlacementPointerState();
   }
 
   private rotatePlacement(): void {
+    this.placementPointer = reducePlacementPointer(this.placementPointer, { type: 'rotate' }).state;
     this.placement.rotate(this.placedObjects);
   }
 
   private confirmPlacement(): void {
     const result = this.placement.confirm(this.placedObjects);
+    if (result) {
+      this.placementPointer = reducePlacementPointer(this.placementPointer, { type: 'confirm' }).state;
+      this.exposePlacementPointerState();
+    }
     if (!result) this.ui.toast('That plot is blocked', 'warning');
   }
 
@@ -311,11 +324,13 @@ export class ParkGame {
   private cancelPlacement(): void {
     if (this.activePlaceable) this.simulation.refund(this.activePlaceable);
     this.placement.cancel(false);
+    this.placementPointer = reducePlacementPointer(this.placementPointer, { type: 'cancel' }).state;
     this.exitPlacement();
   }
 
   private exitPlacement(): void {
     this.activePlaceable = null;
+    this.exposePlacementPointerState();
     this.mode = 'build';
     this.ui.setMode('build');
     this.applyInputState();
@@ -612,7 +627,17 @@ export class ParkGame {
 
   private onPointerMove = (event: PointerEvent): void => {
     if (this.mode === 'placing') {
-      this.placement.updatePointer(event.clientX, event.clientY, this.camera, this.placedObjects);
+      if (event.pointerType !== 'mouse' && !event.isPrimary) return;
+      if (event.pointerType === 'pen' && event.buttons === 0) return;
+      const transition = reducePlacementPointer(this.placementPointer, {
+        type: 'pointer-move',
+        pointerType: event.pointerType,
+      });
+      this.placementPointer = transition.state;
+      if (transition.updatePreview) {
+        this.placement.updatePointer(event.clientX, event.clientY, this.camera, this.placedObjects);
+      }
+      this.exposePlacementPointerState();
     } else if (this.mode === 'surface' && this.drawingSurface) {
       const cell = this.pointerToGridCell(event.clientX, event.clientY);
       if (!cell) return;
@@ -622,8 +647,30 @@ export class ParkGame {
   };
 
   private onPointerDown = (event: PointerEvent): void => {
-    if (this.mode === 'placing' && (event.pointerType !== 'mouse' || event.button === 0)) {
-      this.placement.updatePointer(event.clientX, event.clientY, this.camera, this.placedObjects);
+    if (
+      this.mode === 'placing' &&
+      event.isPrimary &&
+      (event.pointerType !== 'mouse' || event.button === 0)
+    ) {
+      const transition = reducePlacementPointer(this.placementPointer, {
+        type: 'primary-canvas-press',
+        pointerType: event.pointerType,
+      });
+      this.placementPointer = transition.state;
+      if (transition.updatePreview) {
+        const projected = this.placement.updatePointer(
+          event.clientX,
+          event.clientY,
+          this.camera,
+          this.placedObjects,
+        );
+        if (projected) {
+          this.placement.pinPosition(this.placedObjects);
+        } else if (this.placementPointer.phase === 'pinned' && !this.placement.pinned) {
+          this.placementPointer = { phase: 'tracking' };
+        }
+      }
+      this.exposePlacementPointerState();
     } else if (this.mode === 'surface' && (event.pointerType !== 'mouse' || event.button === 0)) {
       const cell = this.pointerToGridCell(event.clientX, event.clientY);
       if (!cell) return;
@@ -804,6 +851,12 @@ export class ParkGame {
     this.root.dataset.cameraYaw = this.freeCamera.yaw.toFixed(4);
     this.root.dataset.cameraPitch = this.freeCamera.pitch.toFixed(4);
     this.root.dataset.cameraDistance = this.freeCamera.distance.toFixed(3);
+  }
+
+  private exposePlacementPointerState(): void {
+    this.root.dataset.placementPointer = this.placementPointer.phase;
+    this.root.dataset.placementX = this.placement.position.x.toFixed(3);
+    this.root.dataset.placementZ = this.placement.position.z.toFixed(3);
   }
 
   private syncGuestVisuals(guests: readonly GuestSnapshot[], delta: number): void {
