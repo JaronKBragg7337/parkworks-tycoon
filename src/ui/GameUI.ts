@@ -20,6 +20,7 @@ export interface GameUICallbacks {
   onCancel: () => void;
   onPause: () => void;
   onToggleCamera: () => void;
+  onReframeCamera: () => void;
 }
 
 type GameUIMode = 'explore' | 'build' | 'placing' | 'surface';
@@ -55,6 +56,7 @@ export class GameUI {
   private confirmButton!: HTMLButtonElement;
   private pauseButton!: HTMLButtonElement;
   private cameraButton!: HTMLButtonElement;
+  private reframeButton!: HTMLButtonElement;
   private toastElement!: HTMLElement;
   private selectedCategory: CatalogSection = 'infrastructure';
   private infrastructureTool: InfrastructureTool = 'sidewalk';
@@ -102,6 +104,7 @@ export class GameUI {
     this.cameraButton.setAttribute('aria-label', actionLabel);
     this.cameraButton.setAttribute('aria-pressed', `${isOverview}`);
     this.cameraButton.title = actionLabel;
+    this.reframeButton.hidden = !isOverview;
   }
 
   setPlacement(kind: PlaceableKind, validation: PlacementValidation): void {
@@ -222,6 +225,9 @@ export class GameUI {
             <button class="icon-button camera-toggle" id="camera-button" type="button" aria-label="Switch to overview camera" aria-pressed="false" title="Switch to overview camera">
               ${icon('follow')}<span class="camera-mode-label">Follow</span>
             </button>
+            <button class="icon-button reframe-camera" id="reframe-camera" type="button" aria-label="Recenter Park View" title="Recenter Park View" hidden>
+              ${icon('reframe')}
+            </button>
             <button class="icon-button" id="pause-button" aria-label="Pause simulation">${icon('pause')}</button>
           </div>
         </header>
@@ -235,8 +241,10 @@ export class GameUI {
         <section class="objectives glass-panel" id="objectives" aria-live="polite"></section>
 
         <div class="control-hint glass-panel" id="control-hint">
-          <span class="desktop-hint"><kbd>WASD</kbd> walk · drag to look · <kbd>Shift</kbd> sprint</span>
-          <span class="touch-hint">Touch left to walk · drag right to look</span>
+          <span class="desktop-hint follow-camera-hint"><kbd>WASD</kbd> walk · drag to look · <kbd>Shift</kbd> sprint</span>
+          <span class="touch-hint follow-camera-hint">Touch left to walk · drag right to look</span>
+          <span class="desktop-hint free-camera-hint"><kbd>WASD</kbd> pan · drag to orbit · wheel to zoom</span>
+          <span class="touch-hint free-camera-hint">Touch left to pan · drag right to orbit · pinch to zoom</span>
         </div>
 
         <button class="build-toggle" id="build-toggle" aria-label="Open build catalog">
@@ -296,6 +304,7 @@ export class GameUI {
     this.rotateButton = this.requireElement<HTMLButtonElement>('#rotate-placement');
     this.confirmButton = this.requireElement<HTMLButtonElement>('#confirm-placement');
     this.cameraButton = this.requireElement<HTMLButtonElement>('#camera-button');
+    this.reframeButton = this.requireElement<HTMLButtonElement>('#reframe-camera');
     this.pauseButton = this.requireElement<HTMLButtonElement>('#pause-button');
     this.toastElement = this.requireElement('#toast');
   }
@@ -308,6 +317,7 @@ export class GameUI {
     this.buildToggle.addEventListener('click', this.callbacks.onToggleBuild);
     this.requireElement('#close-build').addEventListener('click', this.callbacks.onToggleBuild);
     this.cameraButton.addEventListener('click', this.callbacks.onToggleCamera);
+    this.reframeButton.addEventListener('click', this.callbacks.onReframeCamera);
     this.pauseButton.addEventListener('click', this.callbacks.onPause);
     this.requireElement('#rotate-placement').addEventListener('click', this.callbacks.onRotate);
     this.requireElement('#cancel-placement').addEventListener('click', this.callbacks.onCancel);

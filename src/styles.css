@@ -185,7 +185,7 @@ canvas.game-canvas {
 .camera-toggle[data-camera-mode='overview'] .camera-mode-label { color: #0a3932; }
 .camera-toggle[data-camera-mode='overview']:hover { background: linear-gradient(145deg, #a0f7d3, #57cba5); }
 #app:not([data-mode='explore']) .camera-toggle { visibility: hidden; pointer-events: none; }
-#app[data-camera-mode='overview'] .control-hint,
+#app:not([data-mode='explore']) .reframe-camera { display: none; }
 #app:not([data-mode='explore']) .control-hint { display: none; }
 
 .park-pulse {
@@ -233,7 +233,10 @@ canvas.game-canvas {
   opacity: .86;
   transition: opacity .4s;
 }
-.touch-hint { display: none; }
+.touch-hint,
+.free-camera-hint { display: none; }
+#app[data-camera-mode='overview'] .follow-camera-hint { display: none; }
+#app[data-camera-mode='overview'] .free-camera-hint.desktop-hint { display: inline; }
 kbd { padding: 2px 5px; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; background: rgb(255 255 255 / 7%); font-size: 9px; }
 
 .build-toggle {
@@ -424,6 +427,8 @@ kbd { padding: 2px 5px; color: var(--ink); border: 1px solid var(--line); border
 @media (pointer: coarse) {
   .desktop-hint { display: none; }
   .touch-hint { display: inline; }
+  #app[data-camera-mode='overview'] .free-camera-hint.desktop-hint { display: none; }
+  #app[data-camera-mode='overview'] .free-camera-hint.touch-hint { display: inline; }
   .control-hint { bottom: calc(var(--safe-bottom) + 72px); }
 }
 

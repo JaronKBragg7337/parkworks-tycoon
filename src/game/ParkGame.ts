@@ -27,6 +27,12 @@ import { AssetFactory } from '../world/AssetFactory';
 import { MaterialLibrary } from '../world/Materials';
 import { GameUI } from '../ui/GameUI';
 import { OVERVIEW_CAMERA_FAR, overviewCameraPose } from './cameraMath';
+import {
+  createFreeCameraState,
+  getFreeCameraPose,
+  stepFreeCamera,
+  type FreeCameraState,
+} from './freeCameraMath';
 import { InfrastructureBuilder, type InfrastructureTool } from './InfrastructureBuilder';
 import { ParkInfrastructureView } from './ParkInfrastructureView';
 import { PlacementSystem } from './PlacementSystem';
@@ -74,6 +80,7 @@ export class ParkGame {
   private cameraYaw = 0;
   private cameraPitch = 0.44;
   private cameraDistance = 8.2;
+  private freeCamera: FreeCameraState = createFreeCameraState();
   private running = false;
   private started = false;
   private mode: 'explore' | 'build' | 'placing' | 'surface' = 'explore';
@@ -124,6 +131,7 @@ export class ParkGame {
       onCancel: () => this.cancelBuild(),
       onPause: () => this.togglePause(),
       onToggleCamera: () => this.toggleCameraMode(),
+      onReframeCamera: () => this.reframeFreeCamera(),
     });
 
     const joystick = this.requireElement('#movement-joystick');
@@ -556,24 +564,37 @@ export class ParkGame {
     this.isPaused = !this.isPaused;
     this.applySimulationState();
     this.ui.setPaused(this.isPaused);
+    this.renderer.domElement.focus({ preventScroll: true });
   }
 
   private toggleCameraMode(): void {
     this.cameraMode = this.cameraMode === 'follow' ? 'overview' : 'follow';
+    if (this.cameraMode === 'overview') this.resetFreeCamera();
     this.ui.setCameraMode(this.cameraMode);
     this.applyInputState();
+    this.renderer.domElement.focus({ preventScroll: true });
     this.player.userData.isWalking = false;
     this.assets.setCharacterMotion(this.player, 0);
     this.ui.toast(
       this.cameraMode === 'overview'
-        ? 'Park View — framing all owned land'
+        ? 'Free Park View — move, orbit, and zoom anywhere'
         : 'Following your caretaker',
       'positive',
     );
   }
 
+  private reframeFreeCamera(): void {
+    if (this.mode !== 'explore' || this.cameraMode !== 'overview') return;
+    this.resetFreeCamera();
+    this.renderer.domElement.focus({ preventScroll: true });
+    this.ui.toast('Park View recentered', 'positive');
+  }
+
   private applyInputState(): void {
-    this.input.setEnabled(this.mode === 'explore' && this.cameraMode === 'follow');
+    const acceptsCameraInput = this.mode === 'explore';
+    this.input.setEnabled(acceptsCameraInput);
+    this.input.setZoomEnabled(acceptsCameraInput && this.cameraMode === 'overview');
+    if (acceptsCameraInput) this.renderer.domElement.focus({ preventScroll: true });
   }
 
   private applySimulationState(): void {
@@ -668,15 +689,28 @@ export class ParkGame {
 
   private updateInput(delta: number): void {
     this.player.userData.isWalking = false;
-    if (this.mode !== 'explore' || this.cameraMode !== 'follow') {
+    if (this.mode !== 'explore') {
       this.assets.setCharacterMotion(this.player, 0);
       return;
     }
     const look = this.input.consumeLookDelta();
+    const movement = this.input.getMovement();
+    if (this.cameraMode === 'overview') {
+      this.freeCamera = stepFreeCamera(this.freeCamera, {
+        panRight: movement.x * movement.magnitude,
+        panForward: movement.y * movement.magnitude,
+        lookDeltaX: look.x,
+        lookDeltaY: look.y,
+        zoomDelta: this.input.consumeZoomDelta(),
+      }, delta);
+      this.assets.setCharacterMotion(this.player, 0);
+      this.exposeFreeCameraState();
+      return;
+    }
+
     this.cameraYaw -= look.x * 0.004;
     this.cameraPitch = MathUtils.clamp(this.cameraPitch + look.y * 0.003, 0.2, 0.78);
 
-    const movement = this.input.getMovement();
     if (movement.magnitude <= 0) {
       this.assets.setCharacterMotion(this.player, 0);
       return;
@@ -734,6 +768,12 @@ export class ParkGame {
         this.cameraTargetDesired.z + Math.cos(this.cameraYaw) * horizontal,
       );
       this.fog.density = MathUtils.lerp(this.fog.density, 0.013, 1 - Math.exp(-delta * 2.5));
+    } else if (this.mode === 'explore' && this.cameraMode === 'overview') {
+      const pose = getFreeCameraPose(this.freeCamera, 4.5);
+      this.cameraTargetDesired.set(pose.target.x, pose.target.y, pose.target.z);
+      this.cameraDesired.set(pose.position.x, pose.position.y, pose.position.z);
+      const overviewFog = Math.min(0.0105, 0.68 / this.freeCamera.distance);
+      this.fog.density = MathUtils.lerp(this.fog.density, overviewFog, 1 - Math.exp(-delta * 2.5));
     } else {
       const pose = overviewCameraPose(this.parkGrid.getParcelSnapshots(), this.camera.aspect);
       this.cameraTargetDesired.set(pose.target.x, pose.target.y, pose.target.z);
@@ -744,6 +784,26 @@ export class ParkGame {
     this.cameraTarget.lerp(this.cameraTargetDesired, 1 - Math.exp(-delta * (followsPlayer ? 9 : 3.5)));
     this.camera.position.lerp(this.cameraDesired, 1 - Math.exp(-delta * 7));
     this.camera.lookAt(this.cameraTarget);
+  }
+
+  private resetFreeCamera(): void {
+    const framed = overviewCameraPose(this.parkGrid.getParcelSnapshots(), this.camera.aspect);
+    this.freeCamera = createFreeCameraState({
+      focusX: framed.target.x,
+      focusZ: framed.target.z,
+      yaw: framed.azimuth,
+      pitch: framed.elevation,
+      distance: framed.distance,
+    });
+    this.exposeFreeCameraState();
+  }
+
+  private exposeFreeCameraState(): void {
+    this.root.dataset.cameraFocusX = this.freeCamera.focusX.toFixed(3);
+    this.root.dataset.cameraFocusZ = this.freeCamera.focusZ.toFixed(3);
+    this.root.dataset.cameraYaw = this.freeCamera.yaw.toFixed(4);
+    this.root.dataset.cameraPitch = this.freeCamera.pitch.toFixed(4);
+    this.root.dataset.cameraDistance = this.freeCamera.distance.toFixed(3);
   }
 
   private syncGuestVisuals(guests: readonly GuestSnapshot[], delta: number): void {

@@ -1,4 +1,9 @@
 import { normalizeJoystickVector, type Axis2D } from './joystickMath';
+import {
+  normalizeWheelZoomDelta,
+  pinchZoomDelta,
+  pointerDistance,
+} from './inputZoomMath';
 
 export interface MovementAxes {
   x: number;
@@ -18,11 +23,15 @@ export class InputController {
   private readonly move: MovementAxes = { x: 0, y: 0, magnitude: 0 };
   private readonly lookDelta: LookDelta = { x: 0, y: 0 };
   private readonly joystickOrigin: Axis2D = { x: 0, y: 0 };
+  private readonly touchPointers = new Map<number, Axis2D>();
   private movementPointerId: number | null = null;
   private lookPointerId: number | null = null;
+  private pinchDistance: number | null = null;
   private lastLookX = 0;
   private lastLookY = 0;
+  private zoomDelta = 0;
   private enabled = true;
+  private zoomEnabled = false;
   private maxJoystickRadius = 56;
 
   constructor(element: HTMLElement, joystick: HTMLElement) {
@@ -34,6 +43,18 @@ export class InputController {
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
     if (!enabled) this.reset();
+  }
+
+  setZoomEnabled(enabled: boolean): void {
+    if (this.zoomEnabled === enabled) return;
+    this.zoomEnabled = enabled;
+    this.releaseMovement();
+    this.lookPointerId = null;
+    this.lookDelta.x = 0;
+    this.lookDelta.y = 0;
+    this.touchPointers.clear();
+    this.pinchDistance = null;
+    this.zoomDelta = 0;
   }
 
   getMovement(): MovementAxes {
@@ -59,6 +80,14 @@ export class InputController {
     return sample;
   }
 
+  /** Positive values zoom out; negative values zoom in. */
+  consumeZoomDelta(): number {
+    if (!this.enabled || !this.zoomEnabled) return 0;
+    const sample = this.zoomDelta;
+    this.zoomDelta = 0;
+    return sample;
+  }
+
   isSprinting(): boolean {
     return this.pressedKeys.has('ShiftLeft') || this.pressedKeys.has('ShiftRight');
   }
@@ -73,6 +102,7 @@ export class InputController {
     this.element.removeEventListener('pointermove', this.onPointerMove);
     this.element.removeEventListener('pointerup', this.onPointerUp);
     this.element.removeEventListener('pointercancel', this.onPointerUp);
+    this.element.removeEventListener('wheel', this.onWheel);
   }
 
   private bindEvents(): void {
@@ -85,6 +115,7 @@ export class InputController {
     this.element.addEventListener('pointermove', this.onPointerMove);
     this.element.addEventListener('pointerup', this.onPointerUp);
     this.element.addEventListener('pointercancel', this.onPointerUp);
+    this.element.addEventListener('wheel', this.onWheel, { passive: false });
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {
@@ -106,6 +137,15 @@ export class InputController {
       this.element.setPointerCapture(event.pointerId);
     } catch {
       // Synthetic events and a few embedded browsers do not expose a pointer handle.
+    }
+
+    if (this.zoomEnabled && event.pointerType === 'touch') {
+      this.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (this.touchPointers.size >= 2) {
+        event.preventDefault();
+        this.beginPinch();
+        return;
+      }
     }
 
     if (movementSide && this.movementPointerId === null) {
@@ -131,6 +171,19 @@ export class InputController {
   };
 
   private onPointerMove = (event: PointerEvent): void => {
+    if (this.zoomEnabled && event.pointerType === 'touch' && this.touchPointers.has(event.pointerId)) {
+      this.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (this.pinchDistance !== null) {
+        event.preventDefault();
+        const distance = this.currentPinchDistance();
+        if (distance !== null) {
+          this.zoomDelta += pinchZoomDelta(this.pinchDistance, distance);
+          this.pinchDistance = distance;
+        }
+        return;
+      }
+    }
+
     if (event.pointerId === this.movementPointerId) {
       event.preventDefault();
       const sample = normalizeJoystickVector(
@@ -161,8 +214,26 @@ export class InputController {
   };
 
   private onPointerUp = (event: PointerEvent): void => {
+    if (this.zoomEnabled && event.pointerType === 'touch') {
+      this.touchPointers.delete(event.pointerId);
+      if (this.pinchDistance !== null) {
+        const distance = this.currentPinchDistance();
+        this.pinchDistance = distance;
+        if (distance === null) {
+          this.releaseMovement();
+          this.lookPointerId = null;
+        }
+        return;
+      }
+    }
     if (event.pointerId === this.movementPointerId) this.releaseMovement();
     if (event.pointerId === this.lookPointerId) this.lookPointerId = null;
+  };
+
+  private onWheel = (event: WheelEvent): void => {
+    if (!this.enabled || !this.zoomEnabled || this.isUiTarget(event.target)) return;
+    event.preventDefault();
+    this.zoomDelta += normalizeWheelZoomDelta(event.deltaY, event.deltaMode, window.innerHeight);
   };
 
   private onResetEvent = (): void => this.reset();
@@ -177,6 +248,24 @@ export class InputController {
     this.lookPointerId = null;
     this.lookDelta.x = 0;
     this.lookDelta.y = 0;
+    this.touchPointers.clear();
+    this.pinchDistance = null;
+    this.zoomDelta = 0;
+  }
+
+  private beginPinch(): void {
+    this.releaseMovement();
+    this.lookPointerId = null;
+    this.lookDelta.x = 0;
+    this.lookDelta.y = 0;
+    this.pinchDistance = this.currentPinchDistance();
+  }
+
+  private currentPinchDistance(): number | null {
+    const pointers = [...this.touchPointers.values()];
+    const first = pointers[0];
+    const second = pointers[1];
+    return first && second ? pointerDistance(first, second) : null;
   }
 
   private releaseMovement(): void {
