@@ -1,16 +1,28 @@
 import { CATEGORY_LABELS, PLACEABLE_SPECS } from '../core/catalog';
 import type { ParkStats, PlaceableCategory, PlaceableKind, SimulationEvent } from '../core/types';
+import {
+  DEFAULT_SURFACE_COSTS,
+  type ParcelSnapshot,
+  type ParkGridCosts,
+} from '../core/ParkGrid';
+import type { InfrastructureTool } from '../game/InfrastructureBuilder';
+import type { PlacementValidation } from '../game/PlacementSystem';
 import { icon } from './icons';
 
 export interface GameUICallbacks {
   onStart: () => void;
   onToggleBuild: () => void;
   onSelectPlaceable: (kind: PlaceableKind) => void;
+  onSelectInfrastructure: (tool: InfrastructureTool) => void;
+  onBuyParcel: (parcelId: string) => void;
   onRotate: () => void;
   onConfirm: () => void;
   onCancel: () => void;
   onPause: () => void;
 }
+
+type GameUIMode = 'explore' | 'build' | 'placing' | 'surface';
+type CatalogSection = 'infrastructure' | PlaceableCategory;
 
 function money(value: number): string {
   return `$${Math.round(value).toLocaleString('en-US')}`;
@@ -38,9 +50,14 @@ export class GameUI {
   private buildToggle!: HTMLButtonElement;
   private placementBar!: HTMLElement;
   private placementStatus!: HTMLElement;
+  private rotateButton!: HTMLButtonElement;
+  private confirmButton!: HTMLButtonElement;
   private pauseButton!: HTMLButtonElement;
   private toastElement!: HTMLElement;
-  private selectedCategory: PlaceableCategory = 'food';
+  private selectedCategory: CatalogSection = 'infrastructure';
+  private infrastructureTool: InfrastructureTool = 'sidewalk';
+  private parcels: readonly ParcelSnapshot[] = [];
+  private infrastructureCosts: ParkGridCosts = DEFAULT_SURFACE_COSTS;
   private toastTimer = 0;
 
   constructor(root: HTMLElement, callbacks: GameUICallbacks) {
@@ -52,10 +69,12 @@ export class GameUI {
     this.renderCatalog();
   }
 
-  setMode(mode: 'explore' | 'build' | 'placing'): void {
+  setMode(mode: GameUIMode): void {
     this.root.dataset.mode = mode;
     this.buildPanel.classList.toggle('is-open', mode === 'build');
-    this.placementBar.classList.toggle('is-open', mode === 'placing');
+    this.placementBar.classList.toggle('is-open', mode === 'placing' || mode === 'surface');
+    this.placementBar.classList.toggle('is-surface', mode === 'surface');
+    this.rotateButton.hidden = mode === 'surface';
     this.buildToggle.classList.toggle('is-active', mode !== 'explore');
     this.buildToggle.innerHTML = mode === 'explore'
       ? `${icon('build')}<span>Build</span>`
@@ -68,10 +87,52 @@ export class GameUI {
     this.root.classList.toggle('is-paused', paused);
   }
 
-  setPlacement(kind: PlaceableKind, valid: boolean): void {
+  setPlacement(kind: PlaceableKind, validation: PlacementValidation): void {
     const spec = PLACEABLE_SPECS.find((item) => item.kind === kind);
     if (!spec) return;
-    this.placementStatus.innerHTML = `<strong>${spec.name}</strong><span class="placement-validity ${valid ? 'is-valid' : ''}">${valid ? 'Clear to build' : 'Move to a clear plot'}</span>`;
+    const tone = !validation.valid
+      ? 'is-invalid'
+      : validation.connected
+        ? 'is-valid'
+        : 'is-warning';
+    this.placementStatus.innerHTML = `<strong>${spec.name}</strong><span class="placement-validity ${tone}">${validation.message}</span>`;
+    this.confirmButton.disabled = !validation.valid;
+    this.confirmButton.innerHTML = `${icon('check')}<span>Build</span>`;
+  }
+
+  updateInfrastructure(
+    parcels: readonly ParcelSnapshot[],
+    costs: ParkGridCosts,
+  ): void {
+    this.parcels = parcels;
+    this.infrastructureCosts = costs;
+    if (this.selectedCategory === 'infrastructure') this.renderCatalog();
+  }
+
+  setInfrastructureStroke(
+    tool: InfrastructureTool,
+    cellCount: number,
+    cost: number,
+    valid: boolean,
+    reason: string | null = null,
+  ): void {
+    this.infrastructureTool = tool;
+    const label = tool === 'sidewalk'
+      ? 'Sidewalk'
+      : tool === 'road'
+        ? 'Park road'
+        : 'Demolish paths';
+    const action = tool === 'demolish' ? 'Demolish' : 'Build';
+    const hasCells = cellCount > 0;
+    const status = hasCells
+      ? valid
+        ? `${cellCount} ${cellCount === 1 ? 'tile' : 'tiles'} · ${money(cost)}`
+        : this.infrastructureReason(reason)
+      : 'Drag across the park to mark tiles';
+    const tone = !hasCells ? 'is-neutral' : valid ? 'is-valid' : 'is-invalid';
+    this.placementStatus.innerHTML = `<strong>${label}</strong><span class="placement-validity ${tone}">${status}</span>`;
+    this.confirmButton.disabled = !hasCells || !valid;
+    this.confirmButton.innerHTML = `${icon('check')}<span>${action}</span>`;
   }
 
   updateStats(stats: Readonly<ParkStats>): void {
@@ -212,6 +273,8 @@ export class GameUI {
     this.buildToggle = this.requireElement<HTMLButtonElement>('#build-toggle');
     this.placementBar = this.requireElement('#placement-bar');
     this.placementStatus = this.requireElement('#placement-status');
+    this.rotateButton = this.requireElement<HTMLButtonElement>('#rotate-placement');
+    this.confirmButton = this.requireElement<HTMLButtonElement>('#confirm-placement');
     this.pauseButton = this.requireElement<HTMLButtonElement>('#pause-button');
     this.toastElement = this.requireElement('#toast');
   }
@@ -231,18 +294,26 @@ export class GameUI {
 
   private renderCatalog(): void {
     const tabs = this.requireElement('#category-tabs');
-    const categories = Object.keys(CATEGORY_LABELS) as PlaceableCategory[];
+    const categories: CatalogSection[] = [
+      'infrastructure',
+      ...(Object.keys(CATEGORY_LABELS) as PlaceableCategory[]),
+    ];
     tabs.innerHTML = categories
-      .map((category) => `<button data-category="${category}" class="${category === this.selectedCategory ? 'is-active' : ''}">${CATEGORY_LABELS[category]}</button>`)
+      .map((category) => `<button data-category="${category}" class="${category === this.selectedCategory ? 'is-active' : ''}">${category === 'infrastructure' ? 'Paths & land' : CATEGORY_LABELS[category]}</button>`)
       .join('');
     for (const button of tabs.querySelectorAll<HTMLButtonElement>('button')) {
       button.addEventListener('click', () => {
-        this.selectedCategory = button.dataset.category as PlaceableCategory;
+        this.selectedCategory = button.dataset.category as CatalogSection;
         this.renderCatalog();
       });
     }
 
     const catalog = this.requireElement('#catalog-grid');
+    if (this.selectedCategory === 'infrastructure') {
+      this.renderInfrastructureCatalog(catalog);
+      return;
+    }
+    catalog.classList.remove('is-infrastructure');
     catalog.innerHTML = PLACEABLE_SPECS.filter((spec) => spec.category === this.selectedCategory)
       .map((spec) => `
         <button class="catalog-card" data-kind="${spec.kind}">
@@ -254,6 +325,114 @@ export class GameUI {
       .join('');
     for (const button of catalog.querySelectorAll<HTMLButtonElement>('[data-kind]')) {
       button.addEventListener('click', () => this.callbacks.onSelectPlaceable(button.dataset.kind as PlaceableKind));
+    }
+  }
+
+  private renderInfrastructureCatalog(catalog: HTMLElement): void {
+    const ownedParcels = this.parcels.filter((parcel) => parcel.owned);
+    const ownedArea = ownedParcels.reduce((total, parcel) => total + parcel.area, 0);
+    const availableParcels = this.parcels.filter((parcel) => parcel.status === 'available');
+    const sidewalkCost = this.infrastructureCosts.construction.sidewalk;
+    const roadCost = this.infrastructureCosts.construction.road;
+    const demolitionCost = Math.min(
+      this.infrastructureCosts.demolition.sidewalk,
+      this.infrastructureCosts.demolition.road,
+    );
+
+    catalog.classList.add('is-infrastructure');
+    catalog.innerHTML = `
+      <section class="infrastructure-section" aria-labelledby="paths-heading">
+        <div class="catalog-section-heading">
+          <div><span class="eyebrow">Infrastructure</span><h3 id="paths-heading">Draw the way</h3></div>
+          <span>Guests only visit places connected to the gate.</span>
+        </div>
+        <div class="infrastructure-tools">
+          ${this.infrastructureToolCard('sidewalk', 'Sidewalk', 'Comfortable pedestrian paving', sidewalkCost)}
+          ${this.infrastructureToolCard('road', 'Park road', 'A broad service and guest route', roadCost)}
+          ${this.infrastructureToolCard('demolish', 'Demolish', 'Return path tiles to lawn', demolitionCost, true)}
+        </div>
+      </section>
+      <section class="infrastructure-section land-section" aria-labelledby="land-heading">
+        <div class="catalog-section-heading">
+          <div><span class="eyebrow">Expansion</span><h3 id="land-heading">Grow your park</h3></div>
+          <span>${ownedParcels.length} ${ownedParcels.length === 1 ? 'parcel' : 'parcels'} · ${ownedArea.toLocaleString('en-US')} m² owned</span>
+        </div>
+        <div class="parcel-grid">
+          ${this.parcels.length > 0
+            ? this.parcels.map((parcel) => this.parcelCard(parcel)).join('')
+            : '<div class="parcel-empty">Expansion survey loading…</div>'}
+        </div>
+        ${availableParcels.length === 0 && this.parcels.length > ownedParcels.length
+          ? '<p class="parcel-note">Buy an adjacent parcel to unlock the next expansion.</p>'
+          : ''}
+      </section>
+    `;
+
+    for (const button of catalog.querySelectorAll<HTMLButtonElement>('[data-infrastructure-tool]')) {
+      button.addEventListener('click', () => {
+        this.infrastructureTool = button.dataset.infrastructureTool as InfrastructureTool;
+        this.callbacks.onSelectInfrastructure(this.infrastructureTool);
+      });
+    }
+    for (const button of catalog.querySelectorAll<HTMLButtonElement>('[data-parcel-id]')) {
+      button.addEventListener('click', () => {
+        const parcelId = button.dataset.parcelId;
+        if (parcelId) this.callbacks.onBuyParcel(parcelId);
+      });
+    }
+  }
+
+  private infrastructureToolCard(
+    tool: InfrastructureTool,
+    name: string,
+    description: string,
+    cost: number,
+    from = false,
+  ): string {
+    return `
+      <button class="infrastructure-card" data-infrastructure-tool="${tool}">
+        <span class="infrastructure-swatch is-${tool}" aria-hidden="true"><i></i></span>
+        <span class="catalog-copy"><strong>${name}</strong><small>${description}</small></span>
+        <span class="catalog-price">${from ? 'from ' : ''}${money(cost)}<small>/ tile</small></span>
+      </button>
+    `;
+  }
+
+  private parcelCard(parcel: ParcelSnapshot): string {
+    const stateLabel = parcel.owned
+      ? 'Owned'
+      : parcel.purchasable
+        ? `Buy ${money(parcel.cost)}`
+        : 'Locked';
+    const note = parcel.owned
+      ? `${parcel.area.toLocaleString('en-US')} m² in your park`
+      : parcel.purchasable
+        ? `${parcel.area.toLocaleString('en-US')} m² · adjacent land`
+        : 'Expand toward this parcel to unlock it';
+    return `
+      <button
+        class="parcel-card is-${parcel.status}"
+        ${parcel.purchasable ? `data-parcel-id="${parcel.id}"` : 'disabled'}
+        aria-label="${parcel.name}: ${stateLabel}"
+      >
+        <span class="parcel-map" aria-hidden="true"><i></i></span>
+        <span class="parcel-copy"><strong>${parcel.name}</strong><small>${note}</small></span>
+        <span class="parcel-state">${stateLabel}</span>
+      </button>
+    `;
+  }
+
+  private infrastructureReason(reason: string | null): string {
+    switch (reason) {
+      case 'unowned-land': return 'This tile is outside your owned land';
+      case 'surface-not-lawn': return 'Build paths only on clear lawn';
+      case 'surface-is-lawn': return 'Select a road or sidewalk to demolish';
+      case 'out-of-bounds': return 'Keep the stroke inside the park boundary';
+      case 'occupied': return 'A facility occupies part of this stroke';
+      case 'entrance-required': return 'The front-gate path must stay connected';
+      case 'insufficient-funds': return 'Not enough park funds';
+      case 'empty-selection': return 'Drag across the park to mark tiles';
+      default: return reason ?? 'This stroke cannot be applied';
     }
   }
 

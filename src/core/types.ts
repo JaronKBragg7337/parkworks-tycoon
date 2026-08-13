@@ -5,15 +5,38 @@ export type PlaceableCategory = 'food' | 'rides' | 'facilities' | 'decor';
 export type PlaceableKind =
   | 'burger-kiosk'
   | 'lemonade-stand'
+  | 'ice-cream-cart'
   | 'carousel'
   | 'sky-wheel'
+  | 'bumper-cars'
+  | 'drop-tower'
+  | 'pirate-ship'
   | 'restroom'
+  | 'first-aid'
+  | 'information-booth'
   | 'trash-bin'
   | 'bench'
   | 'park-lamp'
   | 'shade-tree';
 
-export type ServiceNeed = 'hunger' | 'fun' | 'bladder' | 'rest' | 'trash' | null;
+export type PlaceableIcon =
+  | 'burger'
+  | 'cup'
+  | 'ice-cream'
+  | 'carousel'
+  | 'wheel'
+  | 'bumper-car'
+  | 'drop-tower'
+  | 'pirate-ship'
+  | 'restroom'
+  | 'first-aid'
+  | 'information'
+  | 'bin'
+  | 'bench'
+  | 'lamp'
+  | 'tree';
+
+export type ServiceNeed = 'hunger' | 'fun' | 'bladder' | 'rest' | 'trash' | 'information' | null;
 
 export interface Vec2 {
   x: number;
@@ -25,7 +48,7 @@ export interface PlaceableSpec {
   name: string;
   shortName: string;
   category: PlaceableCategory;
-  icon: string;
+  icon: PlaceableIcon;
   description: string;
   cost: number;
   upkeep: number;
@@ -41,6 +64,8 @@ export interface FacilitySnapshot {
   id: string;
   kind: PlaceableKind;
   position: Vec2;
+  /** Nearest connected guest-path cell, when pathfinding is enabled. */
+  accessPoint?: Vec2;
   rotation: number;
   queueLength: number;
   activeUsers: number;

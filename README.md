@@ -19,12 +19,18 @@ under `heartbeat-observatory/games/parkworks-tycoon/` without changing source.
 - Dynamic touch stick: the left half of the screen is invisible at rest; touch
   it to reveal the stick under the thumb. The right side remains available for
   camera look, and pointer release/cancel immediately clears movement.
-- Build catalog with two food stations, two rides, a restroom, sorting bin,
-  bench, shielded lamp, and mature shade tree.
-- Grid-snapped construction preview with footprint collision, rotation,
-  confirmation, cancellation, purchase, and refund behavior.
+- Build catalog with three food stations, five rides, three staffed facilities,
+  waste services, benches, shielded lamps, and mature shade trees.
+- Buy seven adjacent land parcels, then draw sidewalks and park roads in
+  one-metre touch-friendly strokes. Construction is quoted before confirmation,
+  and parcels unlock only from land you already own.
+- Grid-snapped object construction with owned-land checks, path conflicts,
+  footprint collision, rotation, confirmation, cancellation, and refunds.
 - Deterministic guests with hunger, fun, bladder, rest, happiness, queuing,
   facility capacity, service time, spending, and departure states.
+- Guests travel the connected road/sidewalk graph from the front gate. They do
+  not target, queue at, or generate revenue from a disconnected attraction;
+  drawing a route to a prebuilt facility activates it immediately.
 - Food packaging becomes carried waste. Guests find a nearby bin or drop litter;
   the player cleans litter by walking close to it. Cleanliness changes live.
 - Park cash, construction expense, upkeep, revenue, reputation, attendance,

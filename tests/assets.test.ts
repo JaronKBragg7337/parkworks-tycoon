@@ -51,15 +51,74 @@ describe('procedural placeable assets', () => {
     });
   }
 
-  it.each(['burger-kiosk', 'lemonade-stand', 'carousel', 'sky-wheel', 'restroom'] as const)(
+  it.each([
+    'burger-kiosk',
+    'lemonade-stand',
+    'ice-cream-cart',
+    'carousel',
+    'sky-wheel',
+    'bumper-cars',
+    'drop-tower',
+    'pirate-ship',
+    'restroom',
+    'first-aid',
+    'information-booth',
+  ] as const)(
     '%s exposes secondary and tertiary construction layers',
     (kind) => {
       const report = inspectAsset(kind);
       const constructionNames = report.names.filter((name) =>
-        /frame|brace|bolt|panel|seam|hinge|vent|rail|conduit|support|post|bearing|mast|trim|hub|tap|wheel/.test(name),
+        /frame|brace|bolt|panel|seam|hinge|vent|rail|conduit|support|post|bearing|mast|trim|hub|tap|wheel|restraint|mullion|jamb|axle|cable/.test(name),
       );
       expect(report.meshes).toBeGreaterThan(20);
       expect(constructionNames.length).toBeGreaterThan(4);
     },
   );
+
+  it.each(['bumper-cars', 'drop-tower', 'pirate-ship'] as const)(
+    '%s provides an operating animation pivot that moves',
+    (kind) => {
+      const report = inspectAsset(kind);
+      const pivot = report.object.getObjectByName(
+        kind === 'bumper-cars'
+          ? 'bumper car animation pivot 1'
+          : kind === 'drop-tower'
+            ? 'guided drop carriage animation pivot'
+            : 'pirate ship swing animation pivot',
+      );
+      expect(report.object.userData.animated).toBe(true);
+      expect(typeof report.object.userData.animate).toBe('function');
+      expect(pivot).toBeDefined();
+      if (!pivot) return;
+      const before = [...pivot.position.toArray(), ...pivot.rotation.toArray()];
+      factory.animate(report.object, 7.25, 0.016, 1);
+      const after = [...pivot.position.toArray(), ...pivot.rotation.toArray()];
+      expect(after).not.toEqual(before);
+    },
+  );
+
+  it('keeps the expanded ride set inside the mobile geometry budget', () => {
+    const mobileFactory = new AssetFactory({ materials, quality: 'mobile' });
+    for (const kind of ['bumper-cars', 'drop-tower', 'pirate-ship'] as const) {
+      const object = mobileFactory.createPlaceable(kind);
+      let triangles = 0;
+      object.traverse((child) => {
+        if (!(child instanceof Mesh)) return;
+        const geometry = child.geometry as BufferGeometry;
+        triangles += geometry.index
+          ? geometry.index.count / 3
+          : (geometry.getAttribute('position')?.count ?? 0) / 3;
+      });
+      expect(triangles).toBeLessThan(125_000);
+    }
+    mobileFactory.dispose();
+  });
+
+  it('can omit the baked promenade for player-authored path grids', () => {
+    const landscape = factory.createLandscape({ includePromenade: false, includeFence: false });
+    const names: string[] = [];
+    landscape.traverse((child) => names.push(child.name.toLowerCase()));
+    expect(names.some((name) => /promenade|cross path|planting bed/.test(name))).toBe(false);
+    expect(names).toContain('meter-scaled grass parcel');
+  });
 });

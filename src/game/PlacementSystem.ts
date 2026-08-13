@@ -20,13 +20,20 @@ export interface PlacementResult {
   placed: PlacedObject;
 }
 
-export interface PlacementCallbacks {
-  onPreviewChanged: (valid: boolean, position: Vec2, rotation: number) => void;
-  onPlaced: (result: PlacementResult) => void;
-  onCancelled: () => void;
+export interface PlacementValidation {
+  valid: boolean;
+  connected: boolean;
+  message: string;
 }
 
-const LOT_LIMIT = 28;
+export interface PlacementCallbacks {
+  onPreviewChanged: (validation: PlacementValidation, position: Vec2, rotation: number) => void;
+  onPlaced: (result: PlacementResult) => void;
+  onCancelled: () => void;
+  validatePlacement?: (spec: PlaceableSpec, position: Vec2, rotation: number) => PlacementValidation;
+}
+
+const LOT_LIMIT = 33;
 const GATE_CLEARANCE = new Box3(new Vector3(-4.5, 0, 24), new Vector3(4.5, 6, 32));
 
 export class PlacementSystem {
@@ -87,7 +94,13 @@ export class PlacementSystem {
     this.pointer.y = -(clientY / window.innerHeight) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, camera);
     if (!this.raycaster.ray.intersectPlane(this.groundPlane, this.hit)) return;
-    this.pointerWorld = { x: Math.round(this.hit.x), z: Math.round(this.hit.z) };
+    const footprint = this.activeSpec ? this.rotatedFootprint(this.activeSpec) : [1, 1] as const;
+    const offsetX = footprint[0] % 2 === 0 ? 0.5 : 0;
+    const offsetZ = footprint[1] % 2 === 0 ? 0.5 : 0;
+    this.pointerWorld = {
+      x: Math.round(this.hit.x - offsetX) + offsetX,
+      z: Math.round(this.hit.z - offsetZ) + offsetZ,
+    };
     this.previewRoot.position.set(this.pointerWorld.x, 0.04, this.pointerWorld.z);
     this.updateValidity(placed);
   }
@@ -96,6 +109,16 @@ export class PlacementSystem {
     if (!this.active) return;
     this.rotation = (this.rotation + Math.PI / 2) % (Math.PI * 2);
     this.previewRoot.rotation.y = this.rotation;
+    if (this.activeSpec) {
+      const footprint = this.rotatedFootprint(this.activeSpec);
+      const offsetX = footprint[0] % 2 === 0 ? 0.5 : 0;
+      const offsetZ = footprint[1] % 2 === 0 ? 0.5 : 0;
+      this.pointerWorld = {
+        x: Math.round(this.pointerWorld.x - offsetX) + offsetX,
+        z: Math.round(this.pointerWorld.z - offsetZ) + offsetZ,
+      };
+      this.previewRoot.position.set(this.pointerWorld.x, 0.04, this.pointerWorld.z);
+    }
     this.updateValidity(placed);
   }
 
@@ -160,11 +183,34 @@ export class PlacementSystem {
       return !previewBounds.intersectsBox(existingBounds);
     });
 
-    this.valid = insideLot && avoidsGate && avoidsObjects;
-    const color = this.valid ? 0x51d9a3 : 0xff6b5d;
+    const external = this.callbacks.validatePlacement?.(
+      this.activeSpec,
+      { ...this.pointerWorld },
+      this.rotation,
+    ) ?? { valid: true, connected: true, message: 'Clear to build' };
+    this.valid = insideLot && avoidsGate && avoidsObjects && external.valid;
+    const connected = this.valid && external.connected;
+    const validation: PlacementValidation = this.valid
+      ? {
+          valid: true,
+          connected,
+          message: connected ? external.message : 'No route yet — guests will wait for a connected path',
+        }
+      : {
+          valid: false,
+          connected: false,
+          message: !insideLot
+            ? 'Move inside your park boundary'
+            : !avoidsGate
+              ? 'Keep the entrance clear'
+              : !avoidsObjects
+                ? 'That space is already occupied'
+                : external.message,
+        };
+    const color = !this.valid ? 0xff6b5d : connected ? 0x51d9a3 : 0xf0b55a;
     this.footprintMaterial.color.setHex(color);
     this.setPreviewColor(this.previewModel, new Color(color));
-    this.callbacks.onPreviewChanged(this.valid, { ...this.pointerWorld }, this.rotation);
+    this.callbacks.onPreviewChanged(validation, { ...this.pointerWorld }, this.rotation);
   }
 
   private rotatedFootprint(spec: PlaceableSpec, rotation = this.rotation): readonly [number, number] {

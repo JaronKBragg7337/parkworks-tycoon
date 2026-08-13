@@ -24,6 +24,8 @@ interface FacilityRuntime extends FacilitySnapshot {
 
 interface GuestRuntime extends GuestSnapshot {
   destination: Vec2;
+  route: Vec2[];
+  routeIndex: number;
   decisionTimer: number;
   lifetime: number;
   dwellTimer: number;
@@ -31,9 +33,13 @@ interface GuestRuntime extends GuestSnapshot {
   targetNeed: ServiceNeed;
 }
 
-const GATE_POSITION: Vec2 = { x: 0, z: 31 };
+export interface GuestNavigationNetwork {
+  findPath: (start: Vec2, destination: Vec2) => readonly Vec2[] | null;
+  destinations: readonly Vec2[];
+}
+
+const GATE_POSITION: Vec2 = { x: 0, z: 32 };
 const ENTRY_POSITION: Vec2 = { x: 0, z: 22 };
-const PARK_LIMIT = 27;
 const EPSILON = 0.0001;
 
 export type SimulationListener = (event: SimulationEvent) => void;
@@ -63,6 +69,9 @@ export class ParkSimulation {
   private spawnTimer = 1.25;
   private upkeepTimer = 45;
   private running = false;
+  private navigation: GuestNavigationNetwork | null = null;
+  private configuredAppeal: number | null = null;
+  private configuredUpkeep: number | null = null;
   private stats: ParkStats = {
     cash: 4_200,
     reputation: 38,
@@ -94,6 +103,32 @@ export class ParkSimulation {
     return this.running;
   }
 
+  setNavigationNetwork(navigation: GuestNavigationNetwork | null): void {
+    const nextDestinations = new Set(
+      navigation?.destinations.map((point) => `${Math.round(point.x)},${Math.round(point.z)}`) ?? [],
+    );
+    this.navigation = navigation;
+    for (const guest of this.guests.values()) {
+      if (guest.state === 'using' || guest.state === 'queueing') continue;
+      const routeIsStillWalkable = guest.route
+        .slice(guest.routeIndex)
+        .every((point) => nextDestinations.has(`${Math.round(point.x)},${Math.round(point.z)}`));
+      if (!routeIsStillWalkable || !this.assignRoute(guest, guest.destination)) {
+        if (guest.state === 'seeking') this.clearTarget(guest);
+        else if (guest.state === 'leaving') {
+          if (!this.assignRoute(guest, GATE_POSITION)) this.routeToRandomDestination(guest);
+        } else if (guest.state === 'arriving') {
+          if (!this.assignRoute(guest, ENTRY_POSITION)) this.routeToRandomDestination(guest);
+        } else if (guest.state === 'wandering') this.routeToRandomDestination(guest);
+      }
+    }
+  }
+
+  setParkMetrics(appeal: number, upkeep: number): void {
+    this.configuredAppeal = Math.max(0, appeal);
+    this.configuredUpkeep = Math.max(0, upkeep);
+  }
+
   getStats(): Readonly<ParkStats> {
     return this.stats;
   }
@@ -119,7 +154,18 @@ export class ParkSimulation {
       queueLength: facility.queue.length,
       activeUsers: facility.services.length,
       enabled: facility.enabled,
+      accessPoint: facility.accessPoint ? { ...facility.accessPoint } : undefined,
     }));
+  }
+
+  /** Test/debug observable: route waypoints are copied and never expose mutable runtime state. */
+  getGuestRoutes(): Readonly<Record<string, readonly Vec2[]>> {
+    return Object.fromEntries(
+      Array.from(this.guests.values(), (guest) => [
+        guest.id,
+        guest.route.slice(guest.routeIndex).map((point) => ({ ...point })),
+      ]),
+    );
   }
 
   setFacilities(snapshots: readonly FacilitySnapshot[]): void {
@@ -135,9 +181,12 @@ export class ParkSimulation {
     for (const snapshot of snapshots) {
       const current = this.facilities.get(snapshot.id);
       if (current) {
+        const disabled = current.enabled && !snapshot.enabled;
         current.position = { ...snapshot.position };
         current.rotation = snapshot.rotation;
         current.enabled = snapshot.enabled;
+        current.accessPoint = snapshot.accessPoint ? { ...snapshot.accessPoint } : undefined;
+        if (disabled) this.cancelFacility(snapshot.id);
       } else {
         this.facilities.set(snapshot.id, {
           ...snapshot,
@@ -151,26 +200,34 @@ export class ParkSimulation {
 
   purchase(kind: PlaceableKind): boolean {
     const spec = getPlaceableSpec(kind);
-    if (this.stats.cash < spec.cost) {
-      this.emit({ type: 'insufficient-funds', required: spec.cost });
+    return this.spend(spec.cost);
+  }
+
+  refund(kind: PlaceableKind): void {
+    this.refundExpense(getPlaceableSpec(kind).cost);
+  }
+
+  spend(amount: number): boolean {
+    const normalized = Number.isFinite(amount) ? Math.max(0, Math.round(amount)) : 0;
+    if (this.stats.cash < normalized) {
+      this.emit({ type: 'insufficient-funds', required: normalized });
       return false;
     }
 
     this.stats = {
       ...this.stats,
-      cash: this.stats.cash - spec.cost,
-      expenses: this.stats.expenses + spec.cost,
-      reputation: clamp01((this.stats.reputation + spec.appeal * 0.12) / 100) * 100,
+      cash: this.stats.cash - normalized,
+      expenses: this.stats.expenses + normalized,
     };
     return true;
   }
 
-  refund(kind: PlaceableKind): void {
-    const amount = getPlaceableSpec(kind).cost;
+  refundExpense(amount: number): void {
+    const normalized = Number.isFinite(amount) ? Math.max(0, Math.round(amount)) : 0;
     this.stats = {
       ...this.stats,
-      cash: this.stats.cash + amount,
-      expenses: Math.max(0, this.stats.expenses - amount),
+      cash: this.stats.cash + normalized,
+      expenses: Math.max(0, this.stats.expenses - normalized),
     };
   }
 
@@ -208,9 +265,9 @@ export class ParkSimulation {
     if (this.upkeepTimer > 0) return;
 
     this.upkeepTimer += 45;
-    let upkeep = 0;
-    for (const facility of this.facilities.values()) {
-      upkeep += getPlaceableSpec(facility.kind).upkeep;
+    let upkeep = this.configuredUpkeep ?? 0;
+    if (this.configuredUpkeep === null) {
+      for (const facility of this.facilities.values()) upkeep += getPlaceableSpec(facility.kind).upkeep;
     }
     if (upkeep > 0) {
       this.stats = {
@@ -223,8 +280,8 @@ export class ParkSimulation {
 
   private processSpawning(dt: number): void {
     this.spawnTimer -= dt;
-    const attractionAppeal = Array.from(this.facilities.values()).reduce(
-      (total, facility) => total + getPlaceableSpec(facility.kind).appeal,
+    const attractionAppeal = this.configuredAppeal ?? Array.from(this.facilities.values()).reduce(
+      (total, facility) => total + (facility.enabled ? getPlaceableSpec(facility.kind).appeal : 0),
       0,
     );
     const capacity = Math.min(42, 5 + Math.floor(attractionAppeal / 3));
@@ -259,12 +316,15 @@ export class ParkSimulation {
       paletteIndex: this.random.integer(0, 7),
       ageScale: this.random.next() < 0.2 ? 0.78 : this.random.range(0.92, 1.06),
       destination: { ...ENTRY_POSITION },
+      route: [],
+      routeIndex: 0,
       decisionTimer: this.random.range(0.4, 1.2),
       lifetime: 0,
       dwellTimer: 0,
       trashTimer: 0,
       targetNeed: null,
     };
+    this.assignRoute(guest, ENTRY_POSITION);
     this.guests.set(id, guest);
     this.stats = { ...this.stats, guestsVisited: this.stats.guestsVisited + 1 };
     this.emit({ type: 'guest-spawned', guest: { ...guest, needs: copyNeeds(guest.needs) } });
@@ -298,7 +358,7 @@ export class ParkSimulation {
     if (guest.state === 'using' || guest.state === 'queueing') return;
 
     if (guest.state === 'leaving') {
-      if (this.moveToward(guest, GATE_POSITION, dt, 0.55)) this.removeGuest(guest);
+      if (this.moveAlongRoute(guest, dt, 0.55)) this.removeGuest(guest);
       return;
     }
 
@@ -308,7 +368,7 @@ export class ParkSimulation {
     }
 
     if (guest.state === 'arriving') {
-      if (this.moveToward(guest, ENTRY_POSITION, dt, 0.45)) {
+      if (this.moveAlongRoute(guest, dt, 0.45)) {
         guest.state = 'wandering';
         guest.decisionTimer = 0;
       }
@@ -321,7 +381,7 @@ export class ParkSimulation {
         : undefined;
       if (!facility || !facility.enabled) {
         this.clearTarget(guest);
-      } else if (this.moveToward(guest, this.approachPoint(facility), dt, 0.7)) {
+      } else if (this.moveAlongRoute(guest, dt, 0.45)) {
         this.enqueueGuest(guest, facility);
       }
       return;
@@ -334,7 +394,7 @@ export class ParkSimulation {
 
     if (guest.decisionTimer <= 0) this.chooseGuestAction(guest);
     if (guest.state === 'wandering') {
-      if (this.moveToward(guest, guest.destination, dt, 0.45)) {
+      if (this.moveAlongRoute(guest, dt, 0.36)) {
         guest.dwellTimer = this.random.range(0.5, 2.2);
         guest.decisionTimer = Math.min(guest.decisionTimer, 0.4);
       }
@@ -355,9 +415,10 @@ export class ParkSimulation {
 
     if (need && urgency > 0.48 && this.seekFacility(guest, need)) return;
     if (guest.needs.fun > 0.34 && this.random.next() < 0.38 && this.seekFacility(guest, 'fun')) return;
+    if (this.random.next() < 0.08 && this.seekFacility(guest, 'information')) return;
 
     guest.state = 'wandering';
-    guest.destination = this.randomParkPoint();
+    this.routeToRandomDestination(guest);
   }
 
   private seekFacility(guest: GuestRuntime, need: ServiceNeed): boolean {
@@ -378,8 +439,9 @@ export class ParkSimulation {
     guest.state = 'seeking';
     guest.targetNeed = need;
     guest.targetFacilityId = target.id;
-    guest.destination = this.approachPoint(target);
-    return true;
+    if (this.assignRoute(guest, this.approachPoint(target))) return true;
+    this.clearTarget(guest);
+    return false;
   }
 
   private enqueueGuest(guest: GuestRuntime, facility: FacilityRuntime): void {
@@ -392,6 +454,11 @@ export class ParkSimulation {
 
   private processFacilities(dt: number): void {
     for (const facility of this.facilities.values()) {
+      if (!facility.enabled) {
+        facility.queueLength = 0;
+        facility.activeUsers = 0;
+        continue;
+      }
       for (const service of [...facility.services]) {
         service.remaining -= dt;
         if (service.remaining <= 0) this.completeService(facility, service);
@@ -403,6 +470,7 @@ export class ParkSimulation {
   }
 
   private startQueuedServices(facility: FacilityRuntime): void {
+    if (!facility.enabled) return;
     const spec = getPlaceableSpec(facility.kind);
     while (facility.services.length < spec.capacity && facility.queue.length > 0) {
       const guestId = facility.queue.shift();
@@ -437,6 +505,11 @@ export class ParkSimulation {
       case 'rest':
         guest.needs.rest = Math.max(0.02, guest.needs.rest - 0.6);
         break;
+      case 'information':
+        guest.happiness = clamp01(guest.happiness + 0.035);
+        guest.needs.fun = Math.max(0.18, guest.needs.fun - 0.16);
+        guest.decisionTimer = 0;
+        break;
       case 'trash':
         guest.carryingTrash = false;
         guest.trashTimer = 0;
@@ -450,7 +523,7 @@ export class ParkSimulation {
     guest.targetFacilityId = null;
     guest.targetNeed = null;
     guest.position = this.approachPoint(facility);
-    guest.destination = this.randomParkPoint();
+    this.routeToRandomDestination(guest);
     guest.decisionTimer = this.random.range(1.2, 2.8);
 
     this.stats = {
@@ -480,8 +553,8 @@ export class ParkSimulation {
       guest.state = 'seeking';
       guest.targetNeed = 'trash';
       guest.targetFacilityId = nearest.id;
-      guest.destination = this.approachPoint(nearest);
-      return;
+      if (this.assignRoute(guest, this.approachPoint(nearest))) return;
+      this.clearTarget(guest);
     }
 
     this.createLitter(guest.position);
@@ -527,31 +600,93 @@ export class ParkSimulation {
     this.stats = { ...this.stats, cleanliness };
   }
 
-  private moveToward(guest: GuestRuntime, destination: Vec2, dt: number, arriveRadius: number): boolean {
+  private moveToward(guest: GuestRuntime, destination: Vec2, stepBudget: number, arriveRadius: number): number {
     const dx = destination.x - guest.position.x;
     const dz = destination.z - guest.position.z;
     const distance = Math.hypot(dx, dz);
-    if (distance <= arriveRadius) return true;
+    if (distance <= arriveRadius) return stepBudget;
 
-    const step = Math.min(distance, guest.speed * dt);
+    const step = Math.min(distance, stepBudget);
     guest.position.x += (dx / Math.max(distance, EPSILON)) * step;
     guest.position.z += (dz / Math.max(distance, EPSILON)) * step;
     guest.heading = Math.atan2(dx, dz);
-    return false;
+    return Math.max(0, stepBudget - step);
   }
 
-  private randomParkPoint(): Vec2 {
-    const useCentralPath = this.random.next() < 0.72;
-    if (useCentralPath) {
-      if (this.random.next() < 0.55) {
-        return { x: this.random.range(-2.2, 2.2), z: this.random.range(-PARK_LIMIT, 25) };
+  private moveAlongRoute(guest: GuestRuntime, dt: number, arriveRadius: number): boolean {
+    let stepBudget = guest.speed * dt;
+    while (guest.routeIndex < guest.route.length) {
+      const waypoint = guest.route[guest.routeIndex];
+      if (!waypoint) break;
+      const isFinal = guest.routeIndex === guest.route.length - 1;
+      const radius = isFinal ? arriveRadius : 0.12;
+      const before = stepBudget;
+      stepBudget = this.moveToward(guest, waypoint, stepBudget, radius);
+      const reached = distanceSquared(guest.position, waypoint) <= radius * radius;
+      if (!reached) return false;
+      guest.routeIndex += 1;
+      if (stepBudget <= EPSILON || stepBudget === before) {
+        if (guest.routeIndex >= guest.route.length) return true;
+        if (stepBudget <= EPSILON) return false;
       }
-      return { x: this.random.range(-PARK_LIMIT, PARK_LIMIT), z: this.random.range(-2.2, 2.2) };
     }
-    return { x: this.random.range(-23, 23), z: this.random.range(-22, 22) };
+    return guest.routeIndex >= guest.route.length;
+  }
+
+  private assignRoute(guest: GuestRuntime, destination: Vec2): boolean {
+    const start = this.nearestWalkableDestination(guest.position) ?? guest.position;
+    const route = this.navigation
+      ? this.navigation.findPath(start, destination)
+      : [destination];
+    if (!route) {
+      guest.route = [];
+      guest.routeIndex = 0;
+      return false;
+    }
+
+    guest.destination = { ...destination };
+    guest.route = route.map((point) => ({ ...point }));
+    if (distanceSquared(guest.position, start) > 0.08) guest.route.unshift({ ...start });
+    if (guest.route.length === 0) guest.route.push({ ...destination });
+    guest.routeIndex = 0;
+    while (
+      guest.routeIndex < guest.route.length - 1 &&
+      distanceSquared(guest.position, guest.route[guest.routeIndex] ?? guest.position) < 0.08
+    ) {
+      guest.routeIndex += 1;
+    }
+    return true;
+  }
+
+  private routeToRandomDestination(guest: GuestRuntime): void {
+    const choices = this.navigation?.destinations;
+    if (choices && choices.length > 0) {
+      const attempts = Math.min(8, choices.length);
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const destination = choices[this.random.integer(0, choices.length - 1)];
+        if (destination && this.assignRoute(guest, destination)) return;
+      }
+    }
+    this.assignRoute(guest, ENTRY_POSITION);
+  }
+
+  private nearestWalkableDestination(position: Vec2): Vec2 | null {
+    const choices = this.navigation?.destinations;
+    if (!choices || choices.length === 0) return null;
+    let nearest: Vec2 | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const candidate of choices) {
+      const candidateDistance = distanceSquared(position, candidate);
+      if (candidateDistance < nearestDistance) {
+        nearestDistance = candidateDistance;
+        nearest = candidate;
+      }
+    }
+    return nearest ? { ...nearest } : null;
   }
 
   private approachPoint(facility: FacilityRuntime): Vec2 {
+    if (facility.accessPoint) return { ...facility.accessPoint };
     const spec = getPlaceableSpec(facility.kind);
     const distance = Math.max(spec.footprint[0], spec.footprint[1]) * 0.54 + 0.65;
     return {
@@ -562,10 +697,11 @@ export class ParkSimulation {
 
   private queuePoint(facility: FacilityRuntime, index: number): Vec2 {
     const approach = this.approachPoint(facility);
-    const spacing = 0.72 * (index + 1);
+    const angle = index * 2.399963;
+    const spacing = Math.min(0.32, 0.08 + index * 0.045);
     return {
-      x: approach.x + Math.sin(facility.rotation) * spacing,
-      z: approach.z + Math.cos(facility.rotation) * spacing,
+      x: approach.x + Math.sin(angle) * spacing,
+      z: approach.z + Math.cos(angle) * spacing,
     };
   }
 
@@ -573,7 +709,7 @@ export class ParkSimulation {
     guest.targetFacilityId = null;
     guest.targetNeed = null;
     guest.state = 'wandering';
-    guest.destination = this.randomParkPoint();
+    this.routeToRandomDestination(guest);
   }
 
   private cancelFacility(facilityId: string): void {
@@ -585,8 +721,15 @@ export class ParkSimulation {
     ];
     for (const guestId of affected) {
       const guest = this.guests.get(guestId);
-      if (guest) this.clearTarget(guest);
+      if (guest) {
+        guest.position = this.approachPoint(facility);
+        this.clearTarget(guest);
+      }
     }
+    facility.queue = [];
+    facility.services = [];
+    facility.queueLength = 0;
+    facility.activeUsers = 0;
   }
 
   private startLeaving(guest: GuestRuntime): void {
@@ -594,7 +737,7 @@ export class ParkSimulation {
     guest.state = 'leaving';
     guest.targetFacilityId = null;
     guest.targetNeed = null;
-    guest.destination = { ...GATE_POSITION };
+    this.assignRoute(guest, GATE_POSITION);
   }
 
   private removeGuest(guest: GuestRuntime): void {

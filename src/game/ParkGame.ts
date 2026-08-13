@@ -8,19 +8,26 @@ import {
   Group,
   MathUtils,
   Object3D,
+  Plane,
   PerspectiveCamera,
+  Raycaster,
   Scene,
   SRGBColorSpace,
+  Vector2,
   Vector3,
   WebGLRenderer,
 } from 'three';
 import { ParkSimulation } from '../core/ParkSimulation';
+import { ParkGrid, type CellBounds, type GridCell, type SurfaceOperationQuote } from '../core/ParkGrid';
 import { getPlaceableSpec } from '../core/catalog';
 import type { FacilitySnapshot, GuestSnapshot, LitterSnapshot, PlacedObject, PlaceableKind } from '../core/types';
 import { InputController } from '../controls/InputController';
+import { cameraRelativeMovement } from '../controls/movementMath';
 import { AssetFactory } from '../world/AssetFactory';
 import { MaterialLibrary } from '../world/Materials';
 import { GameUI } from '../ui/GameUI';
+import { InfrastructureBuilder, type InfrastructureTool } from './InfrastructureBuilder';
+import { ParkInfrastructureView } from './ParkInfrastructureView';
 import { PlacementSystem } from './PlacementSystem';
 
 interface GuestVisual {
@@ -38,9 +45,12 @@ export class ParkGame {
   private readonly materials: MaterialLibrary;
   private readonly assets: AssetFactory;
   private readonly simulation = new ParkSimulation();
+  private readonly parkGrid = new ParkGrid();
   private readonly input: InputController;
   private readonly ui: GameUI;
   private readonly placement: PlacementSystem;
+  private readonly infrastructureBuilder = new InfrastructureBuilder();
+  private readonly infrastructureView: ParkInfrastructureView;
   private readonly clock = new Clock();
   private readonly placedObjects: PlacedObject[] = [];
   private readonly guestVisuals = new Map<string, GuestVisual>();
@@ -49,9 +59,12 @@ export class ParkGame {
   private readonly playerPosition = new Vector3(0, 0, 18.5);
   private readonly cameraTarget = new Vector3();
   private readonly cameraDesired = new Vector3();
-  private readonly forward = new Vector3();
-  private readonly right = new Vector3();
+  private readonly buildFocus = new Vector3(0, 0, 1);
   private readonly moveDirection = new Vector3();
+  private readonly buildPointer = new Vector2();
+  private readonly buildRaycaster = new Raycaster();
+  private readonly groundPlane = new Plane(new Vector3(0, 1, 0), 0);
+  private readonly groundHit = new Vector3();
   private readonly unregisterSimulation: () => void;
   private animationFrame = 0;
   private cameraYaw = 0;
@@ -59,8 +72,9 @@ export class ParkGame {
   private cameraDistance = 8.2;
   private running = false;
   private started = false;
-  private mode: 'explore' | 'build' | 'placing' = 'explore';
+  private mode: 'explore' | 'build' | 'placing' | 'surface' = 'explore';
   private activePlaceable: PlaceableKind | null = null;
+  private drawingSurface = false;
   private lastStatsUiUpdate = 0;
   private isPaused = false;
 
@@ -89,6 +103,7 @@ export class ParkGame {
       window.matchMedia('(pointer: coarse)').matches ||
       ((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8) <= 4;
     this.assets = new AssetFactory({ materials: this.materials, quality: mobileQuality ? 'mobile' : 'high' });
+    this.infrastructureView = new ParkInfrastructureView(this.materials);
     this.player = this.assets.createPlayer();
     this.root.dataset.playerX = this.playerPosition.x.toFixed(3);
     this.root.dataset.playerZ = this.playerPosition.z.toFixed(3);
@@ -97,9 +112,11 @@ export class ParkGame {
       onStart: () => this.openGates(),
       onToggleBuild: () => this.toggleBuildMode(),
       onSelectPlaceable: (kind) => this.beginPlacement(kind),
+      onSelectInfrastructure: (tool) => this.beginInfrastructure(tool),
+      onBuyParcel: (parcelId) => this.buyParcel(parcelId),
       onRotate: () => this.rotatePlacement(),
-      onConfirm: () => this.confirmPlacement(),
-      onCancel: () => this.cancelPlacement(),
+      onConfirm: () => this.confirmBuild(),
+      onCancel: () => this.cancelBuild(),
       onPause: () => this.togglePause(),
     });
 
@@ -108,19 +125,23 @@ export class ParkGame {
     touchStick.remove();
 
     this.placement = new PlacementSystem(this.world, this.assets, {
-      onPreviewChanged: (valid) => {
-        if (this.activePlaceable) this.ui.setPlacement(this.activePlaceable, valid);
+      onPreviewChanged: (validation) => {
+        if (this.activePlaceable) this.ui.setPlacement(this.activePlaceable, validation);
       },
       onPlaced: ({ placed }) => this.onPlaced(placed),
       onCancelled: () => this.exitPlacement(),
+      validatePlacement: (spec, position, rotation) =>
+        this.validateFacilityPlacement(spec.footprint, spec.serviceNeed !== null, position, rotation),
     });
 
     this.unregisterSimulation = this.simulation.subscribe((event) => this.ui.handleEvent(event));
     this.setupScene();
+    this.refreshInfrastructure();
     this.seedStarterPark();
     this.bindEvents();
     this.resize();
     this.ui.updateStats(this.simulation.getStats());
+    this.ui.updateInfrastructure(this.parkGrid.getParcelSnapshots(), this.parkGrid.getCosts());
   }
 
   start(): void {
@@ -137,9 +158,12 @@ export class ParkGame {
     this.input.dispose();
     this.ui.dispose();
     this.placement.dispose();
+    this.infrastructureView.dispose();
     window.removeEventListener('resize', this.resize);
     this.renderer.domElement.removeEventListener('pointermove', this.onPointerMove);
     this.renderer.domElement.removeEventListener('pointerdown', this.onPointerDown);
+    this.renderer.domElement.removeEventListener('pointerup', this.onPointerUp);
+    this.renderer.domElement.removeEventListener('pointercancel', this.onPointerUp);
     this.renderer.domElement.removeEventListener('contextmenu', this.preventContextMenu);
     this.assets.dispose?.();
     this.materials.dispose();
@@ -153,8 +177,9 @@ export class ParkGame {
     this.scene.add(this.world);
     this.world.add(this.dynamicLayer);
 
-    const landscape = this.assets.createLandscape();
+    const landscape = this.assets.createLandscape({ includePromenade: false });
     this.world.add(landscape);
+    this.world.add(this.infrastructureView.object);
     const gate = this.assets.createParkGate();
     gate.position.set(0, 0, 29.2);
     this.world.add(gate);
@@ -221,9 +246,21 @@ export class ParkGame {
       this.cancelPlacement();
       return;
     }
+    if (this.mode === 'surface') {
+      this.cancelInfrastructure(false);
+      this.mode = 'explore';
+      this.ui.setMode('explore');
+      this.input.setEnabled(true);
+      this.infrastructureView.setLandMode(false);
+      this.applySimulationState();
+      return;
+    }
+    const openingBuild = this.mode !== 'build';
     this.mode = this.mode === 'build' ? 'explore' : 'build';
+    if (openingBuild) this.buildFocus.set(this.playerPosition.x, 0, this.playerPosition.z);
     this.ui.setMode(this.mode);
     this.input.setEnabled(this.mode === 'explore');
+    this.infrastructureView.setLandMode(this.mode === 'build');
     this.applySimulationState();
   }
 
@@ -232,6 +269,7 @@ export class ParkGame {
     this.activePlaceable = kind;
     this.mode = 'placing';
     this.input.setEnabled(false);
+    this.infrastructureView.setLandMode(false);
     this.ui.setMode('placing');
     this.applySimulationState();
     this.placement.begin(kind);
@@ -247,6 +285,16 @@ export class ParkGame {
     if (!result) this.ui.toast('That plot is blocked', 'warning');
   }
 
+  private confirmBuild(): void {
+    if (this.mode === 'surface') this.confirmInfrastructure();
+    else this.confirmPlacement();
+  }
+
+  private cancelBuild(): void {
+    if (this.mode === 'surface') this.cancelInfrastructure();
+    else this.cancelPlacement();
+  }
+
   private cancelPlacement(): void {
     if (this.activePlaceable) this.simulation.refund(this.activePlaceable);
     this.placement.cancel(false);
@@ -258,7 +306,142 @@ export class ParkGame {
     this.mode = 'build';
     this.ui.setMode('build');
     this.input.setEnabled(false);
+    this.infrastructureView.setLandMode(true);
     this.applySimulationState();
+  }
+
+  private beginInfrastructure(tool: InfrastructureTool): void {
+    this.activePlaceable = null;
+    this.infrastructureBuilder.begin(tool);
+    this.mode = 'surface';
+    this.drawingSurface = false;
+    this.input.setEnabled(false);
+    this.infrastructureView.setLandMode(false);
+    this.ui.setMode('surface');
+    this.updateInfrastructureQuote();
+    this.applySimulationState();
+  }
+
+  private cancelInfrastructure(returnToBuild = true): void {
+    this.infrastructureBuilder.cancel();
+    this.infrastructureView.clearPreview();
+    this.drawingSurface = false;
+    if (!returnToBuild) return;
+    this.mode = 'build';
+    this.ui.setMode('build');
+    this.input.setEnabled(false);
+    this.infrastructureView.setLandMode(true);
+    this.applySimulationState();
+  }
+
+  private confirmInfrastructure(): void {
+    const tool = this.infrastructureBuilder.tool;
+    if (!tool) return;
+    const { cells, quote, valid, reason } = this.infrastructureQuote();
+    if (!valid) {
+      this.ui.toast(reason === 'insufficient-funds' ? 'Not enough park funds' : 'Adjust that stroke', 'warning');
+      return;
+    }
+    if (!this.simulation.spend(quote.cost)) return;
+    const result = tool === 'demolish'
+      ? this.parkGrid.demolish(cells)
+      : this.parkGrid.construct(cells, tool);
+    if (!result.applied) {
+      this.simulation.refundExpense(quote.cost);
+      this.ui.toast('The park changed — draw that stroke again', 'warning');
+      this.updateInfrastructureQuote();
+      return;
+    }
+
+    this.infrastructureBuilder.clear();
+    this.refreshInfrastructure();
+    this.syncFacilities();
+    this.updateInfrastructureQuote();
+    this.ui.toast(
+      tool === 'demolish'
+        ? `${result.cellCount} path ${result.cellCount === 1 ? 'tile' : 'tiles'} removed`
+        : `${result.cellCount} ${tool === 'road' ? 'road' : 'sidewalk'} ${result.cellCount === 1 ? 'tile' : 'tiles'} built`,
+      'positive',
+    );
+  }
+
+  private buyParcel(parcelId: string): void {
+    const quote = this.parkGrid.quoteParcelPurchase(parcelId);
+    if (!quote.valid) {
+      this.ui.toast('That parcel is not available yet', 'warning');
+      return;
+    }
+    if (!this.simulation.spend(quote.cost)) return;
+    const result = this.parkGrid.purchaseParcel(parcelId);
+    if (!result.purchased) {
+      this.simulation.refundExpense(quote.cost);
+      return;
+    }
+    this.refreshInfrastructure();
+    this.infrastructureView.setLandMode(this.mode === 'build');
+    const parcel = this.parkGrid.getParcelSnapshot(parcelId);
+    if (parcel) {
+      this.buildFocus.set(
+        (parcel.bounds.minX + parcel.bounds.maxX) / 2,
+        0,
+        (parcel.bounds.minZ + parcel.bounds.maxZ) / 2,
+      );
+    }
+    this.ui.toast(`${parcel?.name ?? 'Land'} added to your park`, 'positive');
+  }
+
+  private infrastructureQuote(): {
+    cells: readonly GridCell[];
+    quote: SurfaceOperationQuote;
+    valid: boolean;
+    reason: string | null;
+  } {
+    const tool = this.infrastructureBuilder.tool;
+    const rawCells = this.infrastructureBuilder.cells;
+    if (!tool) {
+      const quote = this.parkGrid.quoteConstruction([], 'sidewalk');
+      return { cells: [], quote, valid: false, reason: quote.reason };
+    }
+    const cells = rawCells.filter((cell) => tool === 'demolish'
+      ? this.parkGrid.getSurface(cell) !== 'lawn'
+      : this.parkGrid.getSurface(cell) === 'lawn');
+    const occupied = tool !== 'demolish' && cells.some((cell) => this.isCellInsideFacility(cell));
+    const entrance = this.parkGrid.getEntranceCell();
+    const removesEntrance = tool === 'demolish' && cells.some(
+      (cell) => cell.x === entrance.x && cell.z === entrance.z,
+    );
+    const quote = tool === 'demolish'
+      ? this.parkGrid.quoteDemolition(cells)
+      : this.parkGrid.quoteConstruction(cells, tool);
+    const affordable = this.simulation.getStats().cash >= quote.cost;
+    const valid = quote.valid && !occupied && !removesEntrance && affordable;
+    return {
+      cells,
+      quote,
+      valid,
+      reason: occupied
+        ? 'occupied'
+        : removesEntrance
+          ? 'entrance-required'
+          : !affordable && quote.valid
+            ? 'insufficient-funds'
+            : quote.reason,
+    };
+  }
+
+  private updateInfrastructureQuote(): void {
+    const tool = this.infrastructureBuilder.tool;
+    if (!tool) return;
+    const { cells, quote, valid, reason } = this.infrastructureQuote();
+    this.infrastructureView.setPreview(cells, tool, valid);
+    this.ui.setInfrastructureStroke(tool, cells.length, quote.cost, valid, reason);
+  }
+
+  private isCellInsideFacility(cell: GridCell): boolean {
+    return this.placedObjects.some((placed) => {
+      const bounds = this.footprintBounds(placed.position, placed.spec.footprint, placed.rotation);
+      return cell.x >= bounds.minX && cell.x <= bounds.maxX && cell.z >= bounds.minZ && cell.z <= bounds.maxZ;
+    });
   }
 
   private onPlaced(placed: PlacedObject): void {
@@ -268,23 +451,106 @@ export class ParkGame {
     this.mode = 'explore';
     this.ui.setMode('explore');
     this.input.setEnabled(true);
+    this.infrastructureView.setLandMode(false);
     this.applySimulationState();
-    this.ui.toast(`${placed.spec.shortName} opened`, 'positive');
+    const connected = placed.spec.serviceNeed === null || placed.object.userData.connected !== false;
+    this.ui.toast(
+      connected ? `${placed.spec.shortName} opened` : `${placed.spec.shortName} needs a connected path`,
+      connected ? 'positive' : 'warning',
+    );
   }
 
   private syncFacilities(): void {
+    const connectivityById = new Map<string, ReturnType<ParkGrid['getFacilityConnectivity']>>();
     const snapshots: FacilitySnapshot[] = this.placedObjects
       .filter((placed) => placed.spec.serviceNeed !== null)
-      .map((placed) => ({
-        id: placed.id,
-        kind: placed.spec.kind,
-        position: { ...placed.position },
-        rotation: placed.rotation,
-        queueLength: placed.queueLength,
-        activeUsers: placed.activeUsers,
-        enabled: true,
-      }));
+      .map((placed) => {
+        const bounds = this.footprintBounds(placed.position, placed.spec.footprint, placed.rotation);
+        const connectivity = this.parkGrid.getFacilityConnectivity(this.parkGrid.getApproachCells(bounds));
+        connectivityById.set(placed.id, connectivity);
+        placed.object.userData.connected = connectivity.connected;
+        return {
+          id: placed.id,
+          kind: placed.spec.kind,
+          position: { ...placed.position },
+          rotation: placed.rotation,
+          queueLength: placed.queueLength,
+          activeUsers: placed.activeUsers,
+          enabled: connectivity.connected,
+          accessPoint: connectivity.approachCell
+            ? this.parkGrid.cellToWorld(connectivity.approachCell) ?? undefined
+            : undefined,
+        };
+      });
     this.simulation.setFacilities(snapshots);
+    const appeal = this.placedObjects.reduce((total, placed) => {
+      const connected = placed.spec.serviceNeed === null || connectivityById.get(placed.id)?.connected;
+      return total + (connected ? placed.spec.appeal : 0);
+    }, 0);
+    const upkeep = this.placedObjects.reduce((total, placed) => total + placed.spec.upkeep, 0);
+    this.simulation.setParkMetrics(appeal, upkeep);
+  }
+
+  private refreshInfrastructure(): void {
+    const snapshot = this.parkGrid.getSnapshot();
+    this.infrastructureView.update(snapshot);
+    const destinations = this.parkGrid.getReachableCells().map((cell) => ({ ...cell }));
+    this.simulation.setNavigationNetwork({
+      destinations,
+      findPath: (start, destination) => {
+        const startCell = this.parkGrid.worldToCell(start.x, start.z);
+        const destinationCell = this.parkGrid.worldToCell(destination.x, destination.z);
+        if (!startCell || !destinationCell) return null;
+        return this.parkGrid.findRoute(startCell, destinationCell)?.map((cell) => ({ ...cell })) ?? null;
+      },
+    });
+    this.ui?.updateInfrastructure(this.parkGrid.getParcelSnapshots(), this.parkGrid.getCosts());
+  }
+
+  private validateFacilityPlacement(
+    footprint: readonly [number, number],
+    needsPath: boolean,
+    position: { x: number; z: number },
+    rotation: number,
+  ) {
+    const bounds = this.footprintBounds(position, footprint, rotation);
+    const occupiedCells = this.cellsInFootprint(bounds);
+    const insideOwnedLand = occupiedCells.every((cell) => this.parkGrid.isOwned(cell));
+    if (!insideOwnedLand) {
+      return { valid: false, connected: false, message: 'Purchase this land before building here' };
+    }
+    const clearLawn = occupiedCells.every((cell) => this.parkGrid.getSurface(cell) === 'lawn');
+    if (!clearLawn) {
+      return { valid: false, connected: false, message: 'Move the building off roads and sidewalks' };
+    }
+    if (!needsPath) return { valid: true, connected: true, message: 'Clear to build' };
+    const connectivity = this.parkGrid.getFacilityConnectivity(this.parkGrid.getApproachCells(bounds));
+    return {
+      valid: true,
+      connected: connectivity.connected,
+      message: connectivity.connected ? 'Connected to the entrance' : 'No route yet',
+    };
+  }
+
+  private footprintBounds(
+    position: { x: number; z: number },
+    footprint: readonly [number, number],
+    rotation: number,
+  ): CellBounds {
+    const quarterTurn = Math.abs(Math.round(rotation / (Math.PI / 2))) % 2 === 1;
+    const width = quarterTurn ? footprint[1] : footprint[0];
+    const depth = quarterTurn ? footprint[0] : footprint[1];
+    const minX = Math.round(position.x - (width - 1) / 2);
+    const minZ = Math.round(position.z - (depth - 1) / 2);
+    return { minX, maxX: minX + width - 1, minZ, maxZ: minZ + depth - 1 };
+  }
+
+  private cellsInFootprint(bounds: CellBounds): GridCell[] {
+    const cells: GridCell[] = [];
+    for (let z = bounds.minZ; z <= bounds.maxZ; z += 1) {
+      for (let x = bounds.minX; x <= bounds.maxX; x += 1) cells.push({ x, z });
+    }
+    return cells;
   }
 
   private togglePause(): void {
@@ -302,20 +568,53 @@ export class ParkGame {
     window.addEventListener('resize', this.resize);
     this.renderer.domElement.addEventListener('pointermove', this.onPointerMove);
     this.renderer.domElement.addEventListener('pointerdown', this.onPointerDown);
+    this.renderer.domElement.addEventListener('pointerup', this.onPointerUp);
+    this.renderer.domElement.addEventListener('pointercancel', this.onPointerUp);
     this.renderer.domElement.addEventListener('contextmenu', this.preventContextMenu);
   }
 
   private onPointerMove = (event: PointerEvent): void => {
     if (this.mode === 'placing') {
       this.placement.updatePointer(event.clientX, event.clientY, this.camera, this.placedObjects);
+    } else if (this.mode === 'surface' && this.drawingSurface) {
+      const cell = this.pointerToGridCell(event.clientX, event.clientY);
+      if (!cell) return;
+      this.infrastructureBuilder.extendStroke(cell);
+      this.updateInfrastructureQuote();
     }
   };
 
   private onPointerDown = (event: PointerEvent): void => {
     if (this.mode === 'placing' && (event.pointerType !== 'mouse' || event.button === 0)) {
       this.placement.updatePointer(event.clientX, event.clientY, this.camera, this.placedObjects);
+    } else if (this.mode === 'surface' && (event.pointerType !== 'mouse' || event.button === 0)) {
+      const cell = this.pointerToGridCell(event.clientX, event.clientY);
+      if (!cell) return;
+      this.drawingSurface = true;
+      this.renderer.domElement.setPointerCapture(event.pointerId);
+      this.infrastructureBuilder.startStroke(cell);
+      this.updateInfrastructureQuote();
     }
   };
+
+  private onPointerUp = (event: PointerEvent): void => {
+    if (this.mode !== 'surface' || !this.drawingSurface) return;
+    this.drawingSurface = false;
+    this.infrastructureBuilder.endStroke();
+    if (this.renderer.domElement.hasPointerCapture(event.pointerId)) {
+      this.renderer.domElement.releasePointerCapture(event.pointerId);
+    }
+    this.updateInfrastructureQuote();
+  };
+
+  private pointerToGridCell(clientX: number, clientY: number): GridCell | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.buildPointer.x = ((clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
+    this.buildPointer.y = -((clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1;
+    this.buildRaycaster.setFromCamera(this.buildPointer, this.camera);
+    if (!this.buildRaycaster.ray.intersectPlane(this.groundPlane, this.groundHit)) return null;
+    return this.parkGrid.worldToCell(this.groundHit.x, this.groundHit.z);
+  }
 
   private preventContextMenu = (event: MouseEvent): void => event.preventDefault();
 
@@ -366,16 +665,20 @@ export class ParkGame {
       this.assets.setCharacterMotion(this.player, 0);
       return;
     }
-    this.forward.set(Math.sin(this.cameraYaw), 0, Math.cos(this.cameraYaw)).multiplyScalar(-1);
-    this.right.set(this.forward.z, 0, -this.forward.x);
-    this.moveDirection
-      .copy(this.right)
-      .multiplyScalar(movement.x)
-      .addScaledVector(this.forward, movement.y)
-      .normalize();
+    const relative = cameraRelativeMovement(movement.x, movement.y, this.cameraYaw);
+    this.moveDirection.set(relative.x, 0, relative.z);
     const speed = (this.input.isSprinting() ? 6.1 : 3.9) * movement.magnitude;
-    const nextX = MathUtils.clamp(this.playerPosition.x + this.moveDirection.x * speed * delta, -29, 29);
-    const nextZ = MathUtils.clamp(this.playerPosition.z + this.moveDirection.z * speed * delta, -30, 32);
+    const gridBounds = this.parkGrid.getBounds();
+    const nextX = MathUtils.clamp(
+      this.playerPosition.x + this.moveDirection.x * speed * delta,
+      gridBounds.minX + 0.35,
+      gridBounds.maxX - 0.35,
+    );
+    const nextZ = MathUtils.clamp(
+      this.playerPosition.z + this.moveDirection.z * speed * delta,
+      gridBounds.minZ + 0.35,
+      gridBounds.maxZ - 0.35,
+    );
 
     if (!this.isPointInsideFacility(nextX, nextZ)) {
       this.playerPosition.x = nextX;
@@ -414,8 +717,8 @@ export class ParkGame {
         this.cameraTarget.z + Math.cos(this.cameraYaw) * horizontal,
       );
     } else {
-      this.cameraTarget.lerp(new Vector3(0, 0, 1), 1 - Math.exp(-delta * 2.3));
-      this.cameraDesired.set(22, 31, 31);
+      this.cameraTarget.lerp(this.buildFocus, 1 - Math.exp(-delta * 2.3));
+      this.cameraDesired.set(this.buildFocus.x + 22, 31, this.buildFocus.z + 30);
     }
     this.camera.position.lerp(this.cameraDesired, 1 - Math.exp(-delta * 7));
     this.camera.lookAt(this.cameraTarget);
@@ -443,6 +746,7 @@ export class ParkGame {
       visual.object.rotation.y = guest.heading;
       const moved = target.distanceToSquared(visual.previousPosition) > 0.00002;
       visual.object.userData.isWalking = moved;
+      visual.object.userData.carryingTrash = guest.carryingTrash;
       this.assets.setCharacterMotion(visual.object, moved ? 0.88 : 0, guest.carryingTrash);
       visual.previousPosition.copy(target);
       visual.object.visible = guest.state !== 'using';
@@ -470,7 +774,10 @@ export class ParkGame {
     const activity = this.started && !this.isPaused ? 1 : 0;
     this.assets.animate(this.player, elapsed, delta);
     for (const visual of this.guestVisuals.values()) this.assets.animate(visual.object, elapsed, delta);
-    for (const placed of this.placedObjects) this.assets.animate(placed.object, elapsed, delta, activity);
+    for (const placed of this.placedObjects) {
+      const connectedActivity = placed.spec.serviceNeed === null || placed.object.userData.connected !== false;
+      this.assets.animate(placed.object, elapsed, delta, connectedActivity ? activity : 0);
+    }
   }
 
   private getSpec(kind: PlaceableKind) {

@@ -49,6 +49,8 @@ export interface LandscapeOptions {
   width?: number;
   depth?: number;
   includeFence?: boolean;
+  /** Set false when a player-authored path grid supplies all hardscape. */
+  includePromenade?: boolean;
 }
 
 export interface GuestAssetOptions {
@@ -252,6 +254,10 @@ function setInstance(
   mesh.setMatrixAt(index, matrix);
 }
 
+function assertNever(value: never): never {
+  throw new Error(`Unhandled placeable kind: ${String(value)}`);
+}
+
 /**
  * Builds all static and animated 3D assets used by Parkworks.
  *
@@ -290,14 +296,32 @@ export class AssetFactory {
       case 'lemonade-stand':
         asset = this.createLemonadeStand();
         break;
+      case 'ice-cream-cart':
+        asset = this.createIceCreamCart();
+        break;
       case 'carousel':
         asset = this.createCarousel();
         break;
       case 'sky-wheel':
         asset = this.createSkyWheel();
         break;
+      case 'bumper-cars':
+        asset = this.createBumperCars();
+        break;
+      case 'drop-tower':
+        asset = this.createDropTower();
+        break;
+      case 'pirate-ship':
+        asset = this.createPirateShip();
+        break;
       case 'restroom':
         asset = this.createRestroom();
+        break;
+      case 'first-aid':
+        asset = this.createFirstAid();
+        break;
+      case 'information-booth':
+        asset = this.createInformationBooth();
         break;
       case 'trash-bin':
         asset = this.createTrashBin();
@@ -311,6 +335,8 @@ export class AssetFactory {
       case 'shade-tree':
         asset = this.createShadeTree();
         break;
+      default:
+        asset = assertNever(kind);
     }
 
     const spec = getPlaceableSpec(kind);
@@ -471,6 +497,70 @@ export class AssetFactory {
       addCylinder(root, 0.23, 0.23, 0.11, [x, 0.42, -0.83], this.materials.get('rubber'), 'cart wheel', [Math.PI / 2, 0, 0], 14);
       addCylinder(root, 0.09, 0.09, 0.14, [x, 0.42, -0.83], steel, 'wheel hub', [Math.PI / 2, 0, 0], 10, false, true);
     }
+    root.userData.counterPoints = [[0, 0, 1.75]];
+    return root;
+  }
+
+  createIceCreamCart(): Group {
+    const root = makeRoot('Moon Scoop Creamery', 'placeable');
+    const concrete = this.materials.get('concrete');
+    const cream = this.materials.get('paintCream');
+    const teal = this.materials.get('paintTeal');
+    const red = this.materials.get('paintRed');
+    const steel = this.materials.get('steelDark');
+    const galvanized = this.materials.get('galvanized');
+    const timber = this.materials.get('timber');
+    const rubber = this.materials.get('rubber');
+
+    addBox(root, [2.75, 0.13, 2.7], [0, 0.065, 0], concrete, 'cart paving foundation', 0.065, ZERO_ROTATION, false, true);
+    addBox(root, [2.2, 1.05, 1.38], [0, 0.88, -0.05], cream, 'insulated freezer cabinet', 0.09);
+    addBox(root, [2.0, 0.72, 0.025], [0, 0.83, 0.655], teal, 'riveted service panel', 0.02, ZERO_ROTATION, false, true);
+    addPanelSeams(root, 1.9, 0.83, 0.672, 4, galvanized);
+    addBox(root, [2.32, 0.12, 1.52], [0, 1.44, -0.04], galvanized, 'stainless freezer rim', 0.045);
+    addBox(root, [1.04, 0.08, 1.22], [-0.54, 1.53, -0.05], cream, 'left freezer lid', 0.035, [0, 0, -0.02]);
+    addBox(root, [1.04, 0.08, 1.22], [0.54, 1.53, -0.05], cream, 'right freezer lid', 0.035, [0, 0, 0.02]);
+    addBox(root, [2.28, 0.16, 0.52], [0, 1.49, 0.86], timber, 'service counter', 0.045);
+
+    for (const x of [-0.9, 0.9]) {
+      addCylinder(root, 0.29, 0.29, 0.13, [x, 0.48, -0.75], rubber, 'pneumatic cart wheel', [Math.PI / 2, 0, 0], 14);
+      addCylinder(root, 0.1, 0.1, 0.17, [x, 0.48, -0.75], galvanized, 'wheel hub and axle', [Math.PI / 2, 0, 0], 10, false, true);
+      addBox(root, [0.08, 2.0, 0.08], [x, 2.47, -0.58], steel, 'canopy frame post', 0.018);
+      addBox(root, [0.08, 2.0, 0.08], [x, 2.47, 0.58], steel, 'canopy frame post', 0.018);
+      addBolt(root, [x, 0.28, 0.67], galvanized);
+      addBolt(root, [x, 1.24, 0.67], galvanized);
+    }
+    addBrace(root, [-0.9, 3.44, -0.58], [0.9, 3.44, -0.58], 0.035, steel, 'rear canopy cross rail', false);
+    addBrace(root, [-0.9, 3.44, 0.58], [0.9, 3.44, 0.58], 0.035, steel, 'front canopy cross rail', false);
+    for (let stripe = 0; stripe < 6; stripe += 1) {
+      addBox(
+        root,
+        [0.43, 0.09, 1.65],
+        [-1.075 + stripe * 0.43, 3.5, 0],
+        stripe % 2 === 0 ? red : cream,
+        'striped canopy panel',
+        0.03,
+        [0, 0, (stripe - 2.5) * 0.013],
+        false,
+        true,
+      );
+    }
+    addBox(root, [2.65, 0.09, 0.08], [0, 3.46, 0.81], steel, 'canopy valance rail', 0.018, ZERO_ROTATION, false, false);
+    this.addSign(root, 'MOON SCOOP', [1.8, 0.4], [0, 2.92, 0.83], 0x2f7777, 0xffe4b8, 'SMALL-BATCH ICE CREAM');
+
+    const coneGeometry = new ConeGeometry(0.24, 0.6, 12);
+    applyWorldUV(coneGeometry, 1);
+    ensureAmbientOcclusionUV(coneGeometry);
+    const cone = new Mesh(coneGeometry, this.materials.get('cardboard'));
+    cone.name = 'waffle cone sign sculpture';
+    cone.position.set(0, 2.18, 0.79);
+    cone.rotation.z = Math.PI;
+    cone.castShadow = false;
+    root.add(cone);
+    addSphere(root, 0.25, [0, 2.54, 0.79], this.materials.paint(0xf2b4c2, 0.58), 'strawberry scoop', [1, 0.9, 1], false, 10);
+    addSphere(root, 0.22, [0.08, 2.82, 0.79], cream, 'vanilla scoop', [1, 0.9, 1], false, 10);
+    addBox(root, [0.5, 0.22, 0.34], [-0.72, 1.72, 0.43], red, 'compostable cup dispenser', 0.035, ZERO_ROTATION, false, true);
+    addBox(root, [0.38, 0.05, 0.22], [-0.72, 1.83, 0.61], galvanized, 'cup dispenser lip', 0.012, ZERO_ROTATION, false, false);
+
     root.userData.counterPoints = [[0, 0, 1.75]];
     return root;
   }
@@ -677,6 +767,325 @@ export class AssetFactory {
     return root;
   }
 
+  createBumperCars(): Group {
+    const root = makeRoot('Voltage Bumper Hall', 'placeable');
+    const concrete = this.materials.get('concrete');
+    const concreteDark = this.materials.get('concreteDark');
+    const dark = this.materials.get('steelDark');
+    const steel = this.materials.get('galvanized');
+    const teal = this.materials.get('paintTeal');
+    const yellow = this.materials.get('paintYellow');
+    const red = this.materials.get('paintRed');
+    const cream = this.materials.get('paintCream');
+    const rubber = this.materials.get('rubber');
+    const glow = this.materials.get('lampGlow');
+
+    addBox(root, [10.7, 0.2, 8.7], [0, 0.1, 0], concrete, 'reinforced pavilion foundation', 0.09, ZERO_ROTATION, false, true);
+    addBox(root, [9.6, 0.18, 7.25], [0, 0.29, -0.2], concreteDark, 'conductive arena floor', 0.075, ZERO_ROTATION, false, true);
+    addBox(root, [9.8, 0.38, 0.26], [0, 0.54, -3.72], teal, 'rear impact rail', 0.09);
+    addBox(root, [0.26, 0.38, 7.65], [-4.92, 0.54, -0.05], teal, 'left impact rail', 0.09);
+    addBox(root, [0.26, 0.38, 7.65], [4.92, 0.54, -0.05], teal, 'right impact rail', 0.09);
+    addBox(root, [3.65, 0.38, 0.26], [-3.08, 0.54, 3.62], teal, 'front impact rail left', 0.09);
+    addBox(root, [3.65, 0.38, 0.26], [3.08, 0.54, 3.62], teal, 'front impact rail right', 0.09);
+    addBox(root, [9.88, 0.08, 0.08], [0, 0.73, -3.73], rubber, 'rear replaceable bumper strip', 0.025, ZERO_ROTATION, false, true);
+    addBox(root, [0.08, 0.08, 7.6], [-4.93, 0.73, -0.05], rubber, 'left replaceable bumper strip', 0.025, ZERO_ROTATION, false, true);
+    addBox(root, [0.08, 0.08, 7.6], [4.93, 0.73, -0.05], rubber, 'right replaceable bumper strip', 0.025, ZERO_ROTATION, false, true);
+
+    const columnPositions: ReadonlyArray<readonly [number, number]> = [
+      [-4.72, -3.5], [0, -3.5], [4.72, -3.5],
+      [-4.72, 3.4], [0, 3.4], [4.72, 3.4],
+    ];
+    for (const [x, z] of columnPositions) {
+      addBox(root, [0.34, 4.48, 0.34], [x, 2.55, z], dark, 'bolted pavilion frame column', 0.055);
+      addBox(root, [0.68, 0.12, 0.68], [x, 0.28, z], steel, 'column base plate', 0.025);
+      for (const bx of [-0.23, 0.23]) {
+        for (const bz of [-0.23, 0.23]) addBolt(root, [x + bx, 0.36, z + bz], dark, ZERO_ROTATION, 0.035);
+      }
+    }
+    for (const z of [-3.5, 3.4]) {
+      addBox(root, [9.78, 0.28, 0.3], [0, 4.77, z], dark, 'pavilion longitudinal roof beam', 0.04);
+      addBrace(root, [-4.55, 4.58, z], [-3.8, 3.72, z], 0.055, steel, 'roof knee brace');
+      addBrace(root, [4.55, 4.58, z], [3.8, 3.72, z], 0.055, steel, 'roof knee brace');
+    }
+    for (const x of [-4.72, 0, 4.72]) {
+      addBox(root, [0.3, 0.26, 7.2], [x, 4.76, -0.05], dark, 'pavilion transverse roof beam', 0.04);
+    }
+    for (let bay = 0; bay < 6; bay += 1) {
+      const x = -4.15 + bay * 1.66;
+      addBox(root, [1.63, 0.12, 7.3], [x, 5.0 + Math.abs(bay - 2.5) * 0.025, -0.05], bay % 2 === 0 ? cream : teal, 'standing seam canopy panel', 0.035, [0, 0, (bay - 2.5) * 0.014], false, true);
+      addBox(root, [0.035, 0.045, 7.18], [x + 0.81, 5.08, -0.05], steel, 'canopy standing seam', 0.008, ZERO_ROTATION, false, false);
+    }
+
+    for (let index = 0; index < 7; index += 1) {
+      const x = -4.2 + index * 1.4;
+      addBox(root, [0.025, 0.025, 6.5], [x, 4.54, -0.05], steel, 'conductive ceiling grid rail', 0.006, ZERO_ROTATION, false, false);
+    }
+    for (let index = 0; index < 6; index += 1) {
+      const z = -3.05 + index * 1.22;
+      addBox(root, [8.55, 0.025, 0.025], [0, 4.53, z], steel, 'conductive ceiling cross rail', 0.006, ZERO_ROTATION, false, false);
+    }
+
+    const layouts: ReadonlyArray<readonly [number, number, number]> = [
+      [-3.2, -2.25, 0.2], [-0.9, -2.1, 1.05], [1.65, -2.25, 2.2], [3.35, -0.65, 2.9],
+      [-2.85, 0.4, 3.7], [-0.65, 1.1, 4.5], [1.75, 1.25, 5.1], [3.15, 2.2, 5.85],
+    ];
+    const carCount = this.quality === 'high' ? 8 : 6;
+    const cars: Array<{ group: Group; x: number; z: number; phase: number }> = [];
+    for (let index = 0; index < carCount; index += 1) {
+      const layout = layouts[index];
+      if (!layout) continue;
+      const [x, z, phase] = layout;
+      const car = new Group();
+      car.name = `bumper car animation pivot ${index + 1}`;
+      car.position.set(x, 0.48, z);
+      car.rotation.y = phase;
+      root.add(car);
+      cars.push({ group: car, x, z, phase });
+      const bodyColor = index % 3 === 0 ? red : index % 3 === 1 ? yellow : teal;
+      addTorus(car, 0.78, 0.095, [0, 0.13, 0], rubber, 'perimeter impact bumper', [Math.PI / 2, 0, 0], 24, false);
+      addBox(car, [1.28, 0.34, 1.42], [0, 0.35, 0.04], bodyColor, 'pressed bumper car body shell', 0.16);
+      addBox(car, [1.05, 0.18, 0.52], [0, 0.52, 0.37], dark, 'moulded two-place seat', 0.11);
+      addBox(car, [1.08, 0.42, 0.14], [0, 0.76, 0.12], dark, 'seat back and head restraint', 0.07);
+      addBox(car, [0.72, 0.16, 0.12], [0, 0.5, 0.76], cream, 'front number panel', 0.035, ZERO_ROTATION, false, true);
+      addTorus(car, 0.17, 0.025, [-0.28, 0.82, 0.52], steel, 'steering wheel', [0, 0, 0], 16, false);
+      addBrace(car, [-0.28, 0.82, 0.51], [-0.28, 0.63, 0.45], 0.025, dark, 'steering column', false);
+      for (const side of [-1, 1]) {
+        addCylinder(car, 0.11, 0.11, 0.08, [side * 0.5, 0.18, 0.55], dark, 'front wheel hub', [Math.PI / 2, 0, 0], 10, false, true);
+        addBox(car, [0.08, 0.08, 0.05], [side * 0.46, 0.44, 0.755], glow, 'bumper car marker lamp', 0.018, ZERO_ROTATION, false, false);
+      }
+      addBrace(car, [0.48, 0.58, -0.35], [0.48, 3.78, -0.35], 0.025, steel, 'spring contact antenna', false);
+      addSphere(car, 0.07, [0.48, 3.82, -0.35], steel, 'ceiling contact shoe', [1.5, 0.45, 1], false, 8);
+      for (const boltX of [-0.48, 0.48]) addBolt(car, [boltX, 0.45, 0.76], steel, ZERO_ROTATION, 0.024);
+    }
+
+    addBox(root, [1.65, 1.05, 0.82], [-3.95, 0.84, 3.95], cream, 'operator control enclosure', 0.065);
+    addBox(root, [1.25, 0.42, 0.025], [-3.95, 1.02, 4.38], dark, 'operator control panel', 0.012, ZERO_ROTATION, false, true);
+    for (const x of [-4.3, -3.95, -3.6]) addSphere(root, 0.05, [x, 1.1, 4.405], x === -3.95 ? glow : red, 'illuminated control button', [1, 0.45, 1], false, 8);
+    addBox(root, [2.2, 0.82, 0.12], [0, 0.78, 3.84], yellow, 'gated loading rail panel', 0.025);
+    for (const x of [-1.08, 0, 1.08]) addBox(root, [0.07, 1.05, 0.07], [x, 0.85, 3.85], dark, 'loading rail post', 0.018, ZERO_ROTATION, false, true);
+    this.addSign(root, 'VOLTAGE', [3.1, 0.62], [0, 4.32, 3.72], 0x27363b, 0xffd352, 'BUMPER HALL • 8 CARS');
+
+    root.userData.entryPoints = [[0, 0, 4.7]];
+    root.userData.operating = true;
+    root.userData.animationPivots = cars.map(({ group }) => group.name);
+    this.registerAnimation(root, ({ elapsed, activity }) => {
+      if (root.userData.operating === false) return;
+      for (const [index, car] of cars.entries()) {
+        const speed = 0.56 + index * 0.037;
+        car.group.position.x = car.x + Math.sin(elapsed * speed + car.phase) * 0.42 * activity;
+        car.group.position.z = car.z + Math.cos(elapsed * speed * 0.83 + car.phase) * 0.36 * activity;
+        car.group.rotation.y = car.phase + Math.sin(elapsed * speed * 0.7 + index) * 0.7 * activity;
+      }
+    });
+    return root;
+  }
+
+  createDropTower(): Group {
+    const root = makeRoot('Pulse Drop Tower', 'placeable');
+    const concrete = this.materials.get('concrete');
+    const dark = this.materials.get('steelDark');
+    const steel = this.materials.get('galvanized');
+    const red = this.materials.get('paintRed');
+    const teal = this.materials.get('paintTeal');
+    const yellow = this.materials.get('paintYellow');
+    const cream = this.materials.get('paintCream');
+    const glow = this.materials.get('lampGlow');
+
+    addBox(root, [7.65, 0.24, 7.65], [0, 0.12, 0], concrete, 'deep tower foundation slab', 0.1, ZERO_ROTATION, false, true);
+    addBox(root, [2.3, 0.32, 2.3], [0, 0.36, 0], concrete, 'mast pedestal', 0.1);
+    for (const x of [-0.58, 0.58]) {
+      for (const z of [-0.58, 0.58]) {
+        addBox(root, [0.34, 11.65, 0.34], [x, 6.3, z], dark, 'lattice mast vertical column', 0.045);
+        addBox(root, [0.58, 0.12, 0.58], [x, 0.52, z], steel, 'mast column base plate', 0.025);
+        for (const bx of [-0.18, 0.18]) {
+          for (const bz of [-0.18, 0.18]) addBolt(root, [x + bx, 0.6, z + bz], dark, ZERO_ROTATION, 0.032);
+        }
+      }
+    }
+    for (let tier = 0; tier < 6; tier += 1) {
+      const low = 0.8 + tier * 1.88;
+      const high = low + 1.38;
+      addBrace(root, [-0.58, low, 0.58], [0.58, high, 0.58], 0.045, steel, 'front mast diagonal brace', false);
+      addBrace(root, [0.58, low, 0.58], [-0.58, high, 0.58], 0.045, steel, 'front mast cross brace', false);
+      addBrace(root, [-0.58, low, -0.58], [0.58, high, -0.58], 0.045, steel, 'rear mast diagonal brace', false);
+      addBrace(root, [0.58, low, -0.58], [-0.58, high, -0.58], 0.045, steel, 'rear mast cross brace', false);
+      addBrace(root, [-0.58, low, -0.58], [-0.58, high, 0.58], 0.045, steel, 'left mast diagonal brace', false);
+      addBrace(root, [0.58, low, -0.58], [0.58, high, 0.58], 0.045, steel, 'right mast diagonal brace', false);
+      addBox(root, [1.42, 0.12, 1.42], [0, high + 0.04, 0], dark, 'mast horizontal tie frame', 0.025, ZERO_ROTATION, false, true);
+    }
+    addBox(root, [0.12, 11.3, 0.12], [-0.82, 6.2, 0], steel, 'left machined carriage guide rail', 0.018, ZERO_ROTATION, false, true);
+    addBox(root, [0.12, 11.3, 0.12], [0.82, 6.2, 0], steel, 'right machined carriage guide rail', 0.018, ZERO_ROTATION, false, true);
+    for (let y = 1.25; y < 11.7; y += 1.25) {
+      addBox(root, [0.24, 0.05, 0.5], [-0.82, y, 0], yellow, 'left magnetic brake fin', 0.012, ZERO_ROTATION, false, false);
+      addBox(root, [0.24, 0.05, 0.5], [0.82, y, 0], yellow, 'right magnetic brake fin', 0.012, ZERO_ROTATION, false, false);
+    }
+    addBox(root, [1.9, 0.62, 1.9], [0, 12.42, 0], teal, 'upper drive machinery housing', 0.08);
+    addBox(root, [1.56, 0.22, 1.56], [0, 12.83, 0], dark, 'weatherproof drive housing roof', 0.05);
+    addCylinder(root, 0.23, 0.23, 0.46, [0, 13.18, 0], steel, 'beacon mounting pedestal', ZERO_ROTATION, 12);
+    addSphere(root, 0.19, [0, 13.48, 0], glow, 'aviation warning beacon', [1, 0.9, 1], false, 12);
+    addCylinder(root, 0.08, 0.08, 10.8, [0, 6.78, 0.78], steel, 'redundant lift cable', ZERO_ROTATION, 8, false, false);
+
+    const carriage = new Group();
+    carriage.name = 'guided drop carriage animation pivot';
+    carriage.position.y = 1.52;
+    root.add(carriage);
+    addBox(carriage, [3.55, 0.24, 1.15], [0, 0, 1.12], dark, 'front carriage platform frame', 0.055);
+    addBox(carriage, [3.55, 0.24, 1.15], [0, 0, -1.12], dark, 'rear carriage platform frame', 0.055);
+    addBox(carriage, [1.15, 0.24, 3.55], [1.12, 0, 0], dark, 'right carriage platform frame', 0.055);
+    addBox(carriage, [1.15, 0.24, 3.55], [-1.12, 0, 0], dark, 'left carriage platform frame', 0.055);
+    addTorus(carriage, 1.68, 0.075, [0, 0.18, 0], teal, 'carriage perimeter safety rail', [Math.PI / 2, 0, 0], 36, false);
+    for (const x of [-0.62, 0.62]) {
+      for (const z of [-1.16, 1.16]) {
+        addBox(carriage, [0.48, 0.2, 0.52], [x, 0.27, z], red, 'drop tower moulded seat base', 0.09);
+        addBox(carriage, [0.48, 0.78, 0.16], [x, 0.7, z - Math.sign(z) * 0.25], cream, 'drop tower padded seat back', 0.07);
+        addBrace(carriage, [x - 0.18, 0.92, z], [x + 0.18, 0.48, z], 0.035, yellow, 'over shoulder restraint', false);
+      }
+    }
+    for (const z of [-0.62, 0.62]) {
+      for (const x of [-1.16, 1.16]) {
+        addBox(carriage, [0.52, 0.2, 0.48], [x, 0.27, z], red, 'side drop tower seat base', 0.09);
+        addBox(carriage, [0.16, 0.78, 0.48], [x - Math.sign(x) * 0.25, 0.7, z], cream, 'side padded seat back', 0.07);
+        addBrace(carriage, [x, 0.92, z - 0.18], [x, 0.48, z + 0.18], 0.035, yellow, 'side over shoulder restraint', false);
+      }
+    }
+    for (const x of [-0.9, 0.9]) {
+      addBox(carriage, [0.25, 0.52, 0.42], [x, 0.28, 0], steel, 'replaceable guide shoe assembly', 0.035);
+      for (const y of [0.08, 0.42]) addBolt(carriage, [x, y, 0.23], dark, ZERO_ROTATION, 0.03);
+    }
+
+    addBox(root, [2.1, 0.18, 1.8], [0, 0.48, 2.78], dark, 'loading platform', 0.05);
+    addBox(root, [2.2, 0.76, 0.12], [0, 0.88, 3.55], teal, 'interlocked loading gate', 0.025);
+    for (const x of [-1.05, 0, 1.05]) addBox(root, [0.07, 1.0, 0.07], [x, 0.87, 3.56], steel, 'queue gate post', 0.018, ZERO_ROTATION, false, true);
+    addBox(root, [1.45, 1.0, 0.82], [-2.72, 0.72, 2.82], cream, 'tower operator console housing', 0.06);
+    addBox(root, [1.05, 0.35, 0.025], [-2.72, 0.88, 3.245], dark, 'tower operator control panel', 0.01, ZERO_ROTATION, false, true);
+    for (const x of [-3.0, -2.72, -2.44]) addSphere(root, 0.045, [x, 0.96, 3.27], x === -2.72 ? glow : red, 'tower control indicator', [1, 0.45, 1], false, 8);
+    this.addSign(root, 'PULSE DROP', [2.9, 0.55], [0, 2.18, 3.57], 0x28343b, 0xffd352, '13 METRES • MAGNETIC BRAKES');
+
+    root.userData.entryPoints = [[0, 0, 4.4]];
+    root.userData.operating = true;
+    root.userData.animationPivot = carriage.name;
+    this.registerAnimation(root, ({ elapsed, activity }) => {
+      if (root.userData.operating === false) return;
+      const phase = (elapsed * 0.072) % 1;
+      let travel = 0;
+      if (phase < 0.58) {
+        const t = phase / 0.58;
+        travel = t * t * (3 - 2 * t);
+      } else if (phase < 0.7) {
+        travel = 1;
+      } else if (phase < 0.79) {
+        const t = (phase - 0.7) / 0.09;
+        travel = 1 - t * t;
+      }
+      carriage.position.y = 1.52 + travel * 9.25 * activity;
+    });
+    return root;
+  }
+
+  createPirateShip(): Group {
+    const root = makeRoot('Copper Corsair', 'placeable');
+    const concrete = this.materials.get('concrete');
+    const dark = this.materials.get('steelDark');
+    const steel = this.materials.get('galvanized');
+    const copper = this.materials.get('copper');
+    const brass = this.materials.get('brass');
+    const timber = this.materials.get('timber');
+    const darkTimber = this.materials.get('timberDark');
+    const red = this.materials.get('paintRed');
+    const cream = this.materials.get('paintCream');
+    const teal = this.materials.get('paintTeal');
+    const rubber = this.materials.get('rubber');
+    const glow = this.materials.get('lampGlow');
+
+    addBox(root, [11.55, 0.24, 7.55], [0, 0.12, 0], concrete, 'reinforced ride foundation', 0.1, ZERO_ROTATION, false, true);
+    for (const x of [-3.65, 3.65]) {
+      for (const z of [-1.85, 1.85]) {
+        addBox(root, [1.15, 0.3, 1.05], [x, 0.36, z], concrete, 'A-frame concrete footing', 0.08);
+        addBox(root, [0.62, 0.12, 0.58], [x, 0.58, z], steel, 'A-frame base plate', 0.025);
+        for (const bx of [-0.2, 0.2]) {
+          for (const bz of [-0.18, 0.18]) addBolt(root, [x + bx, 0.66, z + bz], dark, ZERO_ROTATION, 0.04);
+        }
+      }
+    }
+    for (const z of [-1.85, 1.85]) {
+      addBrace(root, [-3.65, 0.64, z], [0, 5.18, z], 0.15, dark, 'left A-frame support leg');
+      addBrace(root, [3.65, 0.64, z], [0, 5.18, z], 0.15, dark, 'right A-frame support leg');
+      addBrace(root, [-2.65, 1.85, z], [2.65, 1.85, z], 0.075, steel, 'A-frame lower cross tie');
+      addBrace(root, [-2.9, 1.55, z], [1.55, 3.25, z], 0.052, steel, 'A-frame diagonal lattice brace', false);
+      addBrace(root, [2.9, 1.55, z], [-1.55, 3.25, z], 0.052, steel, 'A-frame diagonal lattice brace', false);
+      addCylinder(root, 0.42, 0.42, 0.32, [0, 5.18, z], dark, 'main pivot bearing housing', [Math.PI / 2, 0, 0], 16);
+      addCylinder(root, 0.24, 0.24, 0.4, [0, 5.18, z], brass, 'pivot bearing cap', [Math.PI / 2, 0, 0], 14, false, true);
+    }
+    addCylinder(root, 0.17, 0.17, 4.15, [0, 5.18, 0], steel, 'through pivot axle', [Math.PI / 2, 0, 0], 14);
+
+    const swing = new Group();
+    swing.name = 'pirate ship swing animation pivot';
+    swing.position.y = 5.18;
+    root.add(swing);
+    addBrace(swing, [0, 0, -1.62], [0, -1.25, -1.38], 0.08, dark, 'rear suspension hanger');
+    addBrace(swing, [0, 0, 1.62], [0, -1.25, 1.38], 0.08, dark, 'front suspension hanger');
+    addBox(swing, [7.7, 0.72, 2.55], [0, -2.1, 0], darkTimber, 'laminated lower hull shell', 0.2);
+    addBox(swing, [7.05, 0.7, 2.78], [0, -1.58, 0], timber, 'planked upper hull shell', 0.16);
+    addBox(swing, [1.3, 0.72, 2.35], [-4.05, -1.76, 0], timber, 'assembled stern quarter', 0.14, [0, 0, -0.24]);
+    addBox(swing, [1.3, 0.72, 2.35], [4.05, -1.76, 0], timber, 'assembled bow quarter', 0.14, [0, 0, 0.24]);
+    addBox(swing, [8.15, 0.16, 2.82], [0, -1.17, 0], dark, 'steel-backed passenger deck', 0.05);
+    addBox(swing, [7.35, 0.16, 0.2], [0, -2.53, 0], copper, 'copper keel band', 0.045);
+    for (const z of [-1.35, 1.35]) {
+      addBox(swing, [8.0, 0.11, 0.09], [0, -0.45, z], brass, 'ship guard handrail', 0.025, ZERO_ROTATION, false, true);
+      for (let x = -3.75; x <= 3.75; x += 0.75) {
+        addBox(swing, [0.055, 0.78, 0.055], [x, -0.79, z], dark, 'ship guard rail post', 0.015, ZERO_ROTATION, false, true);
+      }
+    }
+    for (let row = 0; row < 5; row += 1) {
+      const x = -2.5 + row * 1.25;
+      addBox(swing, [0.18, 0.27, 2.18], [x, -0.86, 0], red, 'two-place ride bench', 0.07);
+      addBox(swing, [0.16, 0.54, 2.18], [x - 0.13, -0.62, 0], dark, 'bench back frame', 0.055);
+      addBrace(swing, [x + 0.12, -0.52, -0.9], [x + 0.12, -0.9, -0.45], 0.032, brass, 'lap restraint left', false);
+      addBrace(swing, [x + 0.12, -0.52, 0.9], [x + 0.12, -0.9, 0.45], 0.032, brass, 'lap restraint right', false);
+      for (const z of [-0.82, 0.82]) addBolt(swing, [x + 0.1, -0.72, z], steel, [0, 0, Math.PI / 2], 0.027);
+    }
+    addCylinder(swing, 0.09, 0.12, 4.0, [0.85, 0.78, 0], dark, 'decorative ship mast', ZERO_ROTATION, 10);
+    addCylinder(swing, 0.05, 0.05, 3.15, [0.85, 2.92, 0], brass, 'mast top spar', [0, 0, Math.PI / 2], 8, false, true);
+    for (let stripe = 0; stripe < 4; stripe += 1) {
+      addBox(
+        swing,
+        [2.45 - stripe * 0.35, 0.58, 0.045],
+        [1.72 - stripe * 0.06, 2.38 - stripe * 0.59, 0],
+        stripe % 2 === 0 ? cream : red,
+        'stitched sail cloth panel',
+        0.018,
+        ZERO_ROTATION,
+        false,
+        true,
+      );
+      addBox(swing, [2.55 - stripe * 0.35, 0.035, 0.06], [1.72 - stripe * 0.06, 2.67 - stripe * 0.59, 0], dark, 'sail reinforcing batten', 0.008, ZERO_ROTATION, false, false);
+    }
+    addBrace(swing, [0.85, 2.55, 0], [-3.95, -0.42, 0], 0.018, brass, 'stern rigging cable', false);
+    addBrace(swing, [0.85, 2.55, 0], [4.32, -0.42, 0], 0.018, brass, 'bow rigging cable', false);
+    addBox(swing, [0.62, 0.62, 0.08], [4.05, -1.52, 1.42], teal, 'corsair crest panel', 0.08, ZERO_ROTATION, false, true);
+
+    addTorus(root, 0.72, 0.15, [0, 1.18, -2.15], rubber, 'friction drive flywheel', ZERO_ROTATION, 28);
+    addCylinder(root, 0.2, 0.2, 0.82, [0, 1.18, -2.15], steel, 'flywheel drive shaft', [Math.PI / 2, 0, 0], 12);
+    addBox(root, [1.35, 0.72, 0.9], [-1.35, 0.65, -2.22], teal, 'drive motor enclosure', 0.07);
+    addBox(root, [0.95, 0.22, 0.025], [-1.35, 0.68, -1.755], dark, 'motor cooling vent panel', 0.01, ZERO_ROTATION, false, true);
+    for (let x = -1.72; x <= -0.98; x += 0.185) addBox(root, [0.1, 0.035, 0.025], [x, 0.68, -1.738], steel, 'motor ventilation louver', 0.008, ZERO_ROTATION, false, false);
+    addBox(root, [2.55, 0.8, 0.12], [0, 0.88, 3.14], teal, 'interlocked loading gate panel', 0.025);
+    for (const x of [-1.25, 0, 1.25]) addBox(root, [0.07, 1.0, 0.07], [x, 0.88, 3.15], dark, 'loading gate post', 0.018, ZERO_ROTATION, false, true);
+    addBox(root, [1.5, 1.0, 0.86], [-4.55, 0.72, 2.65], cream, 'pirate ship operator console', 0.065);
+    addBox(root, [1.08, 0.34, 0.025], [-4.55, 0.88, 3.095], dark, 'pirate ship control panel', 0.01, ZERO_ROTATION, false, true);
+    for (const x of [-4.85, -4.55, -4.25]) addSphere(root, 0.05, [x, 0.96, 3.12], x === -4.55 ? glow : red, 'ship control indicator', [1, 0.45, 1], false, 8);
+    this.addSign(root, 'COPPER CORSAIR', [3.4, 0.58], [0, 2.12, 3.2], 0x413329, 0xf1d8a5, '10 SEATS • AIR BRAKES');
+
+    root.userData.entryPoints = [[0, 0, 4.2]];
+    root.userData.operating = true;
+    root.userData.animationPivot = swing.name;
+    this.registerAnimation(root, ({ elapsed, activity }) => {
+      if (root.userData.operating === false) return;
+      swing.rotation.z = Math.sin(elapsed * 0.72) * 0.64 * activity;
+    });
+    return root;
+  }
+
   createRestroom(): Group {
     const root = makeRoot('Park Comfort Station', 'placeable');
     const concrete = this.materials.get('concrete');
@@ -723,6 +1132,142 @@ export class AssetFactory {
     addBox(root, [1.75, 0.08, 0.65], [-1.28, 0.23, 2.0], concrete, 'flush threshold', 0.025, ZERO_ROTATION, false, true);
     addBox(root, [1.75, 0.08, 0.65], [1.28, 0.23, 2.0], concrete, 'flush threshold', 0.025, ZERO_ROTATION, false, true);
     root.userData.entryPoints = [[-1.28, 0, 2.2], [1.28, 0, 2.2]];
+    return root;
+  }
+
+  createFirstAid(): Group {
+    const root = makeRoot('Pulse Point First Aid', 'placeable');
+    const concrete = this.materials.get('concrete');
+    const cream = this.materials.get('paintCream');
+    const white = this.materials.get('paintWhite');
+    const red = this.materials.get('paintRed');
+    const teal = this.materials.get('paintTeal');
+    const dark = this.materials.get('steelDark');
+    const steel = this.materials.get('galvanized');
+    const glass = this.materials.get('glass');
+    const rubber = this.materials.get('rubber');
+    const glow = this.materials.get('lampGlow');
+
+    addBox(root, [4.85, 0.18, 3.85], [0, 0.09, 0], concrete, 'accessible clinic foundation', 0.075, ZERO_ROTATION, false, true);
+    addBox(root, [4.48, 2.55, 0.2], [0, 1.47, -1.62], cream, 'rear insulated wall assembly', 0.045);
+    addBox(root, [0.2, 2.55, 3.08], [-2.14, 1.47, -0.08], cream, 'left insulated wall assembly', 0.045);
+    addBox(root, [0.2, 2.55, 3.08], [2.14, 1.47, -0.08], cream, 'right insulated wall assembly', 0.045);
+    addBox(root, [0.38, 2.55, 0.2], [-1.95, 1.47, 1.46], cream, 'left front wall return', 0.04);
+    addBox(root, [0.42, 2.55, 0.2], [1.93, 1.47, 1.46], cream, 'right front wall return', 0.04);
+    addBox(root, [0.28, 2.55, 0.2], [0.15, 1.47, 1.46], cream, 'front opening mullion wall', 0.04);
+    addBox(root, [4.1, 0.5, 0.2], [0, 2.5, 1.46], cream, 'front structural lintel', 0.04);
+
+    addBox(root, [1.65, 2.08, 0.1], [1.13, 1.31, 1.59], teal, 'accessible clinic door', 0.045);
+    addBox(root, [1.82, 0.08, 0.17], [1.13, 2.4, 1.55], dark, 'door head frame', 0.018);
+    for (const x of [0.24, 2.02]) addBox(root, [0.08, 2.22, 0.17], [x, 1.34, 1.55], dark, 'door jamb frame', 0.018);
+    addBox(root, [0.72, 0.46, 0.018], [1.13, 1.7, 1.65], glass, 'door observation glazing', 0.012, ZERO_ROTATION, false, false);
+    addBox(root, [0.62, 0.09, 0.025], [1.13, 0.48, 1.66], steel, 'door kick plate trim', 0.012, ZERO_ROTATION, false, false);
+    addCylinder(root, 0.045, 0.045, 0.16, [1.72, 1.24, 1.69], steel, 'clinic lever handle', [Math.PI / 2, 0, 0], 10, false, true);
+    for (const y of [0.68, 1.28, 1.88]) addBox(root, [0.035, 0.18, 0.025], [0.28, y, 1.67], steel, 'door hinge leaf', 0.008, ZERO_ROTATION, false, false);
+
+    addBox(root, [1.76, 1.32, 0.025], [-0.87, 1.47, 1.58], glass, 'reception window glazing', 0.012, ZERO_ROTATION, false, false);
+    addBox(root, [1.94, 0.09, 0.17], [-0.87, 2.16, 1.55], dark, 'window head frame', 0.018);
+    addBox(root, [1.94, 0.09, 0.17], [-0.87, 0.78, 1.55], dark, 'window sill frame', 0.018);
+    for (const x of [-1.83, 0.09]) addBox(root, [0.08, 1.48, 0.17], [x, 1.47, 1.55], dark, 'window jamb frame', 0.018);
+    addBox(root, [0.07, 1.34, 0.06], [-0.87, 1.47, 1.6], dark, 'window center mullion', 0.015, ZERO_ROTATION, false, true);
+    addBox(root, [1.98, 0.12, 0.55], [-0.87, 0.77, 1.78], steel, 'reception pass-through counter', 0.04);
+
+    addBox(root, [4.7, 0.2, 3.55], [0, 2.85, -0.05], white, 'clinic roof deck assembly', 0.06, [-0.025, 0, 0]);
+    addBox(root, [4.78, 0.11, 0.14], [0, 2.75, 1.7], dark, 'roof drip edge', 0.025);
+    addBox(root, [0.12, 2.3, 0.12], [2.3, 1.62, -1.52], dark, 'rainwater downspout', 0.025, ZERO_ROTATION, false, true);
+    addBox(root, [1.02, 0.46, 0.72], [-1.18, 3.18, -0.38], steel, 'roof HVAC enclosure', 0.055);
+    for (let x = -1.55; x <= -0.81; x += 0.185) addBox(root, [0.1, 0.23, 0.025], [x, 3.17, -0.005], dark, 'HVAC ventilation louver', 0.008, ZERO_ROTATION, false, false);
+    addCylinder(root, 0.13, 0.13, 0.34, [0.78, 3.12, -0.62], steel, 'clinic exhaust vent', ZERO_ROTATION, 12);
+    addCylinder(root, 0.22, 0.13, 0.07, [0.78, 3.32, -0.62], steel, 'exhaust rain cap', ZERO_ROTATION, 12, false, true);
+
+    addBox(root, [2.16, 0.14, 1.02], [1.12, 2.48, 1.96], white, 'entry canopy roof', 0.045, [-0.08, 0, 0]);
+    for (const x of [0.22, 2.02]) {
+      addBox(root, [0.07, 1.05, 0.07], [x, 1.95, 2.35], dark, 'entry canopy support post', 0.018);
+      addBrace(root, [x, 2.36, 1.48], [x, 2.2, 2.32], 0.028, steel, 'canopy wall stay', false);
+      addBolt(root, [x, 1.46, 2.39], steel, ZERO_ROTATION, 0.028);
+    }
+    addBox(root, [1.84, 0.07, 0.07], [1.12, 2.48, 2.42], dark, 'canopy front fascia rail', 0.018, ZERO_ROTATION, false, false);
+
+    addBox(root, [0.68, 0.68, 0.09], [-1.25, 2.43, 1.61], white, 'first aid emblem backplate', 0.035, ZERO_ROTATION, false, true);
+    addBox(root, [0.18, 0.54, 0.035], [-1.25, 2.43, 1.67], red, 'first aid vertical cross bar', 0.025, ZERO_ROTATION, false, false);
+    addBox(root, [0.54, 0.18, 0.035], [-1.25, 2.43, 1.67], red, 'first aid horizontal cross bar', 0.025, ZERO_ROTATION, false, false);
+    this.addSign(root, 'FIRST AID', [1.52, 0.38], [-0.25, 2.43, 1.66], 0xf2eee5, 0xb83f38, 'PULSE POINT');
+    addBox(root, [0.24, 0.12, 0.2], [-1.92, 2.48, 1.64], dark, 'shielded clinic wall light', 0.03, [0.16, 0, 0], false, true);
+    addSphere(root, 0.075, [-1.92, 2.39, 1.74], glow, 'clinic wall light lens', [1.3, 0.6, 0.8], false, 8);
+
+    addBox(root, [1.72, 0.09, 0.7], [1.13, 0.22, 2.0], concrete, 'flush accessible threshold', 0.03, ZERO_ROTATION, false, true);
+    addBox(root, [1.7, 0.07, 0.55], [1.13, 0.17, 2.58], concrete, 'accessible approach ramp', 0.025, [-0.04, 0, 0], false, true);
+    addBox(root, [1.65, 0.18, 0.62], [-0.88, 0.63, -0.2], cream, 'treatment cot mattress', 0.06);
+    addBox(root, [1.72, 0.08, 0.68], [-0.88, 0.5, -0.2], dark, 'treatment cot frame', 0.025);
+    for (const x of [-1.57, -0.19]) {
+      addBox(root, [0.06, 0.42, 0.06], [x, 0.28, -0.2], dark, 'cot folding leg', 0.018);
+      addCylinder(root, 0.075, 0.075, 0.05, [x, 0.11, -0.2], rubber, 'cot caster', [Math.PI / 2, 0, 0], 10, false, true);
+    }
+
+    root.userData.entryPoints = [[1.13, 0, 2.75], [-0.87, 0, 2.45]];
+    return root;
+  }
+
+  createInformationBooth(): Group {
+    const root = makeRoot('Park Pathfinder', 'placeable');
+    const concrete = this.materials.get('concrete');
+    const cream = this.materials.get('paintCream');
+    const teal = this.materials.get('paintTeal');
+    const yellow = this.materials.get('paintYellow');
+    const red = this.materials.get('paintRed');
+    const dark = this.materials.get('steelDark');
+    const steel = this.materials.get('galvanized');
+    const glass = this.materials.get('glass');
+    const timber = this.materials.get('timber');
+    const glow = this.materials.get('lampGlow');
+
+    addBox(root, [3.82, 0.15, 2.82], [0, 0.075, 0], concrete, 'booth paving foundation', 0.07, ZERO_ROTATION, false, true);
+    addBox(root, [3.38, 1.02, 2.25], [0, 0.72, -0.04], teal, 'panelized lower booth cabinet', 0.075);
+    addBox(root, [3.04, 0.73, 0.025], [0, 0.7, 1.1], cream, 'front service cabinet panels', 0.025, ZERO_ROTATION, false, true);
+    addPanelSeams(root, 2.9, 0.7, 1.118, 4, steel);
+    addBox(root, [3.52, 0.13, 2.42], [0, 1.27, -0.04], timber, 'continuous service counter sill', 0.045);
+
+    for (const x of [-1.52, 0, 1.52]) {
+      addBox(root, [0.09, 1.56, 0.09], [x, 2.01, 0.97], dark, 'front glazing frame post', 0.02);
+      addBox(root, [0.09, 1.56, 0.09], [x, 2.01, -1.05], dark, 'rear glazing frame post', 0.02);
+    }
+    for (const z of [-1.05, 0.97]) {
+      addBox(root, [3.14, 0.09, 0.09], [0, 2.72, z], dark, 'booth glazing head rail', 0.02);
+      addBox(root, [3.14, 0.09, 0.09], [0, 1.3, z], dark, 'booth glazing sill rail', 0.02);
+    }
+    addBox(root, [1.42, 1.3, 0.025], [-0.76, 2.01, 1.03], glass, 'left service window glazing', 0.01, ZERO_ROTATION, false, false);
+    addBox(root, [1.42, 1.3, 0.025], [0.76, 2.01, 1.03], glass, 'right service window glazing', 0.01, ZERO_ROTATION, false, false);
+    addBox(root, [1.42, 1.3, 0.025], [-0.76, 2.01, -1.1], glass, 'left rear booth glazing', 0.01, ZERO_ROTATION, false, false);
+    addBox(root, [1.42, 1.3, 0.025], [0.76, 2.01, -1.1], glass, 'right rear booth glazing', 0.01, ZERO_ROTATION, false, false);
+    for (const x of [-1.56, 1.56]) {
+      addBox(root, [0.025, 1.3, 1.92], [x, 2.01, -0.04], glass, 'side booth glazing', 0.01, ZERO_ROTATION, false, false);
+      addBox(root, [0.09, 0.09, 2.05], [x, 2.72, -0.04], dark, 'side glazing head rail', 0.02);
+      addBolt(root, [x, 1.32, 1.1], steel, ZERO_ROTATION, 0.026);
+      addBolt(root, [x, 2.68, 1.1], steel, ZERO_ROTATION, 0.026);
+    }
+
+    addBox(root, [3.75, 0.18, 2.82], [0, 2.88, -0.04], cream, 'overhanging booth roof deck', 0.065);
+    addBox(root, [3.42, 0.2, 2.48], [0, 3.04, -0.04], teal, 'raised roof weather cap', 0.055);
+    addBox(root, [3.82, 0.09, 0.09], [0, 2.83, 1.38], dark, 'front roof drip rail', 0.018, ZERO_ROTATION, false, false);
+    for (const x of [-1.55, -0.52, 0.52, 1.55]) addBox(root, [0.035, 0.04, 2.55], [x, 3.16, -0.04], steel, 'roof standing seam', 0.008, ZERO_ROTATION, false, false);
+    addCylinder(root, 0.42, 0.42, 0.1, [0, 3.22, 0.02], yellow, 'information roof medallion', [Math.PI / 2, 0, 0], 20, false, true);
+    addCylinder(root, 0.31, 0.31, 0.105, [0, 3.22, 0.075], cream, 'information medallion inset', [Math.PI / 2, 0, 0], 20, false, true);
+    addBox(root, [0.075, 0.32, 0.035], [0, 3.18, 0.14], teal, 'information symbol stem', 0.025, ZERO_ROTATION, false, false);
+    addSphere(root, 0.055, [0, 3.4, 0.14], teal, 'information symbol dot', [1, 1, 0.55], false, 8);
+
+    addBox(root, [3.28, 0.11, 0.6], [0, 1.29, 1.32], timber, 'two-window public counter', 0.04);
+    addBox(root, [1.18, 0.46, 0.05], [-0.75, 1.78, 1.075], yellow, 'park map display panel', 0.025, ZERO_ROTATION, false, true);
+    addBox(root, [0.9, 0.035, 0.02], [-0.75, 1.78, 1.11], teal, 'map primary route decal', 0.008, [0, 0, 0.22], false, false);
+    addBox(root, [0.035, 0.32, 0.02], [-0.58, 1.78, 1.115], red, 'map destination route decal', 0.008, [0, 0, -0.35], false, false);
+    for (const [x, y] of [[-1.34, 1.85], [-1.34, 1.62], [1.32, 1.85], [1.32, 1.62]] as const) {
+      addBox(root, [0.28, 0.16, 0.08], [x, y, 1.16], cream, 'brochure rack pocket', 0.025, [0.08, 0, 0], false, true);
+      addBox(root, [0.2, 0.12, 0.02], [x, y + 0.07, 1.215], x > 0 ? red : teal, 'printed brochure stack', 0.006, [0.08, 0, 0], false, false);
+    }
+    addBox(root, [0.22, 0.12, 0.2], [1.22, 2.48, 1.12], dark, 'shielded counter light', 0.03, [0.15, 0, 0], false, true);
+    addSphere(root, 0.07, [1.22, 2.4, 1.22], glow, 'counter light lens', [1.3, 0.6, 0.8], false, 8);
+    this.addSign(root, 'PARK PATHFINDER', [2.25, 0.36], [0, 2.54, 1.105], 0x2f7777, 0xffe6ae, 'MAPS • ACCESS • EVENTS');
+
+    root.userData.counterPoints = [[-0.72, 0, 1.9], [0.72, 0, 1.9]];
     return root;
   }
 
@@ -929,25 +1474,25 @@ export class AssetFactory {
       texelScale: 1,
     });
     root.add(lawn);
-    addBox(root, [5.8, 0.11, depth - 4], [0, -0.005, 0], path, 'north south promenade', 0.08, ZERO_ROTATION, false, true);
-    addBox(root, [width - 8, 0.11, 5.8], [0, 0.002, -0.6], path, 'east west promenade', 0.08, ZERO_ROTATION, false, true);
+    if (options.includePromenade !== false) {
+      addBox(root, [5.8, 0.11, depth - 4], [0, -0.005, 0], path, 'north south promenade', 0.08, ZERO_ROTATION, false, true);
+      addBox(root, [width - 8, 0.11, 5.8], [0, 0.002, -0.6], path, 'east west promenade', 0.08, ZERO_ROTATION, false, true);
 
-    const northLength = (depth - 4) / 2;
-    for (const x of [-3.02, 3.02]) {
-      addBox(root, [0.16, 0.14, depth - 4], [x, 0.02, 0], concrete, 'promenade edge restraint', 0.035, ZERO_ROTATION, false, true);
-    }
-    for (const z of [-3.62, 2.42]) {
-      addBox(root, [width - 8, 0.14, 0.16], [0, 0.025, z], concrete, 'cross path edge restraint', 0.035, ZERO_ROTATION, false, true);
-    }
-    void northLength;
+      for (const x of [-3.02, 3.02]) {
+        addBox(root, [0.16, 0.14, depth - 4], [x, 0.02, 0], concrete, 'promenade edge restraint', 0.035, ZERO_ROTATION, false, true);
+      }
+      for (const z of [-3.62, 2.42]) {
+        addBox(root, [width - 8, 0.14, 0.16], [0, 0.025, z], concrete, 'cross path edge restraint', 0.035, ZERO_ROTATION, false, true);
+      }
 
-    for (const [x, z] of [[-8, -8], [8, -8], [-8, 8], [8, 8]] as const) {
-      addCylinder(root, 1.4, 1.55, 0.12, [x, 0.01, z], soil, 'ornamental planting bed', ZERO_ROTATION, 18, false, true);
-      addTorus(root, 1.47, 0.055, [x, 0.08, z], concrete, 'planting bed curb', [Math.PI / 2, 0, 0], 24, false);
-      for (let plant = 0; plant < 5; plant += 1) {
-        const angle = (plant / 5) * Math.PI * 2 + x * 0.03;
-        const p = polar(0.72, angle, 0.24);
-        addSphere(root, 0.23, [x + p.x, p.y, z + p.z], plant % 2 === 0 ? this.materials.get('leafLight') : this.materials.get('leaf'), 'planting mound', [1, 0.75, 1], false, 8);
+      for (const [x, z] of [[-8, -8], [8, -8], [-8, 8], [8, 8]] as const) {
+        addCylinder(root, 1.4, 1.55, 0.12, [x, 0.01, z], soil, 'ornamental planting bed', ZERO_ROTATION, 18, false, true);
+        addTorus(root, 1.47, 0.055, [x, 0.08, z], concrete, 'planting bed curb', [Math.PI / 2, 0, 0], 24, false);
+        for (let plant = 0; plant < 5; plant += 1) {
+          const angle = (plant / 5) * Math.PI * 2 + x * 0.03;
+          const p = polar(0.72, angle, 0.24);
+          addSphere(root, 0.23, [x + p.x, p.y, z + p.z], plant % 2 === 0 ? this.materials.get('leafLight') : this.materials.get('leaf'), 'planting mound', [1, 0.75, 1], false, 8);
+        }
       }
     }
 
