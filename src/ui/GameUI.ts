@@ -19,6 +19,7 @@ export interface GameUICallbacks {
   onConfirm: () => void;
   onCancel: () => void;
   onPause: () => void;
+  onToggleCamera: () => void;
 }
 
 type GameUIMode = 'explore' | 'build' | 'placing' | 'surface';
@@ -53,6 +54,7 @@ export class GameUI {
   private rotateButton!: HTMLButtonElement;
   private confirmButton!: HTMLButtonElement;
   private pauseButton!: HTMLButtonElement;
+  private cameraButton!: HTMLButtonElement;
   private toastElement!: HTMLElement;
   private selectedCategory: CatalogSection = 'infrastructure';
   private infrastructureTool: InfrastructureTool = 'sidewalk';
@@ -66,6 +68,8 @@ export class GameUI {
     this.render();
     this.captureElements();
     this.bindEvents();
+    this.setMode('explore');
+    this.setCameraMode('follow');
     this.renderCatalog();
   }
 
@@ -85,6 +89,19 @@ export class GameUI {
     this.pauseButton.innerHTML = paused ? icon('play', 'Resume') : icon('pause', 'Pause');
     this.pauseButton.setAttribute('aria-label', paused ? 'Resume simulation' : 'Pause simulation');
     this.root.classList.toggle('is-paused', paused);
+  }
+
+  setCameraMode(mode: 'follow' | 'overview'): void {
+    const isOverview = mode === 'overview';
+    const actionLabel = isOverview
+      ? 'Return to follow camera'
+      : 'Switch to overview camera';
+    this.root.dataset.cameraMode = mode;
+    this.cameraButton.dataset.cameraMode = mode;
+    this.cameraButton.innerHTML = `${icon(isOverview ? 'camera' : 'follow')}<span class="camera-mode-label">${isOverview ? 'Overview' : 'Follow'}</span>`;
+    this.cameraButton.setAttribute('aria-label', actionLabel);
+    this.cameraButton.setAttribute('aria-pressed', `${isOverview}`);
+    this.cameraButton.title = actionLabel;
   }
 
   setPlacement(kind: PlaceableKind, validation: PlacementValidation): void {
@@ -202,6 +219,9 @@ export class GameUI {
           </div>
           <div class="day-cluster">
             <span id="time-stat">Day 1 · 9:00 AM</span>
+            <button class="icon-button camera-toggle" id="camera-button" type="button" aria-label="Switch to overview camera" aria-pressed="false" title="Switch to overview camera">
+              ${icon('follow')}<span class="camera-mode-label">Follow</span>
+            </button>
             <button class="icon-button" id="pause-button" aria-label="Pause simulation">${icon('pause')}</button>
           </div>
         </header>
@@ -275,6 +295,7 @@ export class GameUI {
     this.placementStatus = this.requireElement('#placement-status');
     this.rotateButton = this.requireElement<HTMLButtonElement>('#rotate-placement');
     this.confirmButton = this.requireElement<HTMLButtonElement>('#confirm-placement');
+    this.cameraButton = this.requireElement<HTMLButtonElement>('#camera-button');
     this.pauseButton = this.requireElement<HTMLButtonElement>('#pause-button');
     this.toastElement = this.requireElement('#toast');
   }
@@ -286,6 +307,7 @@ export class GameUI {
     });
     this.buildToggle.addEventListener('click', this.callbacks.onToggleBuild);
     this.requireElement('#close-build').addEventListener('click', this.callbacks.onToggleBuild);
+    this.cameraButton.addEventListener('click', this.callbacks.onToggleCamera);
     this.pauseButton.addEventListener('click', this.callbacks.onPause);
     this.requireElement('#rotate-placement').addEventListener('click', this.callbacks.onRotate);
     this.requireElement('#cancel-placement').addEventListener('click', this.callbacks.onCancel);

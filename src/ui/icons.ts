@@ -8,6 +8,8 @@ export type IconName = PlaceableIcon
   | 'close'
   | 'pause'
   | 'play'
+  | 'camera'
+  | 'follow'
   | 'broom'
   | 'spark';
 
@@ -34,6 +36,8 @@ const paths: Record<IconName, string> = {
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
   pause: '<path d="M8 5v14m8-14v14"/>',
   play: '<path d="m8 5 11 7-11 7V5Z"/>',
+  camera: '<path d="M4 7h3l1.5-2h7L17 7h3v12H4V7Z"/><circle cx="12" cy="13" r="3.5"/><path d="M17 10h.01"/>',
+  follow: '<circle cx="12" cy="8" r="2.5"/><path d="M7.5 20v-2.5a4.5 4.5 0 0 1 9 0V20M4 9V5h4m12 4V5h-4"/>',
   broom: '<path d="m15 3-5 10m1-1 5 3-4 6-7-4 4-6 2 1Z"/>',
   spark: '<path d="m12 2 1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7L12 2Zm7 14 .7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7L19 16Z"/>',
 };

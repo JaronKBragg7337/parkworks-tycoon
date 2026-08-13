@@ -26,6 +26,7 @@ import { cameraRelativeMovement } from '../controls/movementMath';
 import { AssetFactory } from '../world/AssetFactory';
 import { MaterialLibrary } from '../world/Materials';
 import { GameUI } from '../ui/GameUI';
+import { OVERVIEW_CAMERA_FAR, overviewCameraPose } from './cameraMath';
 import { InfrastructureBuilder, type InfrastructureTool } from './InfrastructureBuilder';
 import { ParkInfrastructureView } from './ParkInfrastructureView';
 import { PlacementSystem } from './PlacementSystem';
@@ -35,11 +36,14 @@ interface GuestVisual {
   previousPosition: Vector3;
 }
 
+type CameraMode = 'follow' | 'overview';
+
 export class ParkGame {
   private readonly root: HTMLElement;
   private readonly renderer: WebGLRenderer;
   private readonly scene = new Scene();
-  private readonly camera = new PerspectiveCamera(54, 1, 0.1, 180);
+  private readonly camera = new PerspectiveCamera(54, 1, 0.1, OVERVIEW_CAMERA_FAR);
+  private readonly fog = new FogExp2(0xa8c8c0, 0.013);
   private readonly world = new Group();
   private readonly dynamicLayer = new Group();
   private readonly materials: MaterialLibrary;
@@ -58,8 +62,8 @@ export class ParkGame {
   private readonly player: Object3D;
   private readonly playerPosition = new Vector3(0, 0, 18.5);
   private readonly cameraTarget = new Vector3();
+  private readonly cameraTargetDesired = new Vector3();
   private readonly cameraDesired = new Vector3();
-  private readonly buildFocus = new Vector3(0, 0, 1);
   private readonly moveDirection = new Vector3();
   private readonly buildPointer = new Vector2();
   private readonly buildRaycaster = new Raycaster();
@@ -73,6 +77,7 @@ export class ParkGame {
   private running = false;
   private started = false;
   private mode: 'explore' | 'build' | 'placing' | 'surface' = 'explore';
+  private cameraMode: CameraMode = 'follow';
   private activePlaceable: PlaceableKind | null = null;
   private drawingSurface = false;
   private lastStatsUiUpdate = 0;
@@ -118,6 +123,7 @@ export class ParkGame {
       onConfirm: () => this.confirmBuild(),
       onCancel: () => this.cancelBuild(),
       onPause: () => this.togglePause(),
+      onToggleCamera: () => this.toggleCameraMode(),
     });
 
     const joystick = this.requireElement('#movement-joystick');
@@ -173,7 +179,7 @@ export class ParkGame {
 
   private setupScene(): void {
     this.scene.background = new Color(0x9fc2be);
-    this.scene.fog = new FogExp2(0xa8c8c0, 0.013);
+    this.scene.fog = this.fog;
     this.scene.add(this.world);
     this.world.add(this.dynamicLayer);
 
@@ -205,6 +211,7 @@ export class ParkGame {
 
     this.camera.position.set(7, 5.4, 35);
     this.cameraTarget.copy(this.playerPosition).add(new Vector3(0, 1.25, 0));
+    this.cameraTargetDesired.copy(this.cameraTarget);
     this.camera.lookAt(this.cameraTarget);
   }
 
@@ -250,16 +257,14 @@ export class ParkGame {
       this.cancelInfrastructure(false);
       this.mode = 'explore';
       this.ui.setMode('explore');
-      this.input.setEnabled(true);
+      this.applyInputState();
       this.infrastructureView.setLandMode(false);
       this.applySimulationState();
       return;
     }
-    const openingBuild = this.mode !== 'build';
     this.mode = this.mode === 'build' ? 'explore' : 'build';
-    if (openingBuild) this.buildFocus.set(this.playerPosition.x, 0, this.playerPosition.z);
     this.ui.setMode(this.mode);
-    this.input.setEnabled(this.mode === 'explore');
+    this.applyInputState();
     this.infrastructureView.setLandMode(this.mode === 'build');
     this.applySimulationState();
   }
@@ -268,7 +273,7 @@ export class ParkGame {
     if (!this.simulation.purchase(kind)) return;
     this.activePlaceable = kind;
     this.mode = 'placing';
-    this.input.setEnabled(false);
+    this.applyInputState();
     this.infrastructureView.setLandMode(false);
     this.ui.setMode('placing');
     this.applySimulationState();
@@ -305,7 +310,7 @@ export class ParkGame {
     this.activePlaceable = null;
     this.mode = 'build';
     this.ui.setMode('build');
-    this.input.setEnabled(false);
+    this.applyInputState();
     this.infrastructureView.setLandMode(true);
     this.applySimulationState();
   }
@@ -315,7 +320,7 @@ export class ParkGame {
     this.infrastructureBuilder.begin(tool);
     this.mode = 'surface';
     this.drawingSurface = false;
-    this.input.setEnabled(false);
+    this.applyInputState();
     this.infrastructureView.setLandMode(false);
     this.ui.setMode('surface');
     this.updateInfrastructureQuote();
@@ -329,7 +334,7 @@ export class ParkGame {
     if (!returnToBuild) return;
     this.mode = 'build';
     this.ui.setMode('build');
-    this.input.setEnabled(false);
+    this.applyInputState();
     this.infrastructureView.setLandMode(true);
     this.applySimulationState();
   }
@@ -380,13 +385,6 @@ export class ParkGame {
     this.refreshInfrastructure();
     this.infrastructureView.setLandMode(this.mode === 'build');
     const parcel = this.parkGrid.getParcelSnapshot(parcelId);
-    if (parcel) {
-      this.buildFocus.set(
-        (parcel.bounds.minX + parcel.bounds.maxX) / 2,
-        0,
-        (parcel.bounds.minZ + parcel.bounds.maxZ) / 2,
-      );
-    }
     this.ui.toast(`${parcel?.name ?? 'Land'} added to your park`, 'positive');
   }
 
@@ -450,7 +448,7 @@ export class ParkGame {
     this.activePlaceable = null;
     this.mode = 'explore';
     this.ui.setMode('explore');
-    this.input.setEnabled(true);
+    this.applyInputState();
     this.infrastructureView.setLandMode(false);
     this.applySimulationState();
     const connected = placed.spec.serviceNeed === null || placed.object.userData.connected !== false;
@@ -560,6 +558,24 @@ export class ParkGame {
     this.ui.setPaused(this.isPaused);
   }
 
+  private toggleCameraMode(): void {
+    this.cameraMode = this.cameraMode === 'follow' ? 'overview' : 'follow';
+    this.ui.setCameraMode(this.cameraMode);
+    this.applyInputState();
+    this.player.userData.isWalking = false;
+    this.assets.setCharacterMotion(this.player, 0);
+    this.ui.toast(
+      this.cameraMode === 'overview'
+        ? 'Park View — framing all owned land'
+        : 'Following your caretaker',
+      'positive',
+    );
+  }
+
+  private applyInputState(): void {
+    this.input.setEnabled(this.mode === 'explore' && this.cameraMode === 'follow');
+  }
+
   private applySimulationState(): void {
     this.simulation.setRunning(this.started && !this.isPaused && this.mode === 'explore');
   }
@@ -652,7 +668,7 @@ export class ParkGame {
 
   private updateInput(delta: number): void {
     this.player.userData.isWalking = false;
-    if (this.mode !== 'explore') {
+    if (this.mode !== 'explore' || this.cameraMode !== 'follow') {
       this.assets.setCharacterMotion(this.player, 0);
       return;
     }
@@ -707,19 +723,25 @@ export class ParkGame {
   }
 
   private updateCamera(delta: number): void {
-    if (this.mode === 'explore') {
+    const followsPlayer = this.mode === 'explore' && this.cameraMode === 'follow';
+    if (followsPlayer) {
       this.cameraDistance = MathUtils.lerp(this.cameraDistance, 8.2, 1 - Math.exp(-delta * 3));
-      this.cameraTarget.set(this.playerPosition.x, 1.3, this.playerPosition.z);
+      this.cameraTargetDesired.set(this.playerPosition.x, 1.3, this.playerPosition.z);
       const horizontal = Math.cos(this.cameraPitch) * this.cameraDistance;
       this.cameraDesired.set(
-        this.cameraTarget.x + Math.sin(this.cameraYaw) * horizontal,
-        this.cameraTarget.y + Math.sin(this.cameraPitch) * this.cameraDistance,
-        this.cameraTarget.z + Math.cos(this.cameraYaw) * horizontal,
+        this.cameraTargetDesired.x + Math.sin(this.cameraYaw) * horizontal,
+        this.cameraTargetDesired.y + Math.sin(this.cameraPitch) * this.cameraDistance,
+        this.cameraTargetDesired.z + Math.cos(this.cameraYaw) * horizontal,
       );
+      this.fog.density = MathUtils.lerp(this.fog.density, 0.013, 1 - Math.exp(-delta * 2.5));
     } else {
-      this.cameraTarget.lerp(this.buildFocus, 1 - Math.exp(-delta * 2.3));
-      this.cameraDesired.set(this.buildFocus.x + 22, 31, this.buildFocus.z + 30);
+      const pose = overviewCameraPose(this.parkGrid.getParcelSnapshots(), this.camera.aspect);
+      this.cameraTargetDesired.set(pose.target.x, pose.target.y, pose.target.z);
+      this.cameraDesired.set(pose.position.x, pose.position.y, pose.position.z);
+      const overviewFog = Math.min(0.0105, 0.68 / pose.distance);
+      this.fog.density = MathUtils.lerp(this.fog.density, overviewFog, 1 - Math.exp(-delta * 2.5));
     }
+    this.cameraTarget.lerp(this.cameraTargetDesired, 1 - Math.exp(-delta * (followsPlayer ? 9 : 3.5)));
     this.camera.position.lerp(this.cameraDesired, 1 - Math.exp(-delta * 7));
     this.camera.lookAt(this.cameraTarget);
   }
