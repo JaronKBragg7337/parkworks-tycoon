@@ -1,5 +1,8 @@
 # Parkworks Tycoon
 
+[Play Parkworks Tycoon](https://jaronkbragg7337.github.io/parkworks-tycoon/) —
+public, no login, and no installation required.
+
 Parkworks Tycoon is a mobile-friendly 3D amusement-park management game for the
 web. Walk the park yourself, construct attractions and services, earn money
 from guests, and keep litter under control before cleanliness damages the
