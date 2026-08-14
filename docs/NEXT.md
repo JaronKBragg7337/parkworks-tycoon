@@ -108,14 +108,44 @@ dashboard toggle only Jaron can flip.
    with the anon key: reads return nothing and writes are refused. The host-side
    backend is `games/parkworks/hb-save-backend.js`.
 
-**Blocker on item 3, needs Jaron.** Anonymous sign-ins are **disabled** on the
-project — probed directly, the endpoint returns `anonymous_provider_disabled`.
-So cloud saves work for signed-in Heartbeat players and guests fall back to this
-browser, which is what the game already did. Turning it on is a dashboard toggle
-only Jaron can flip (Authentication → Sign In / Providers → Anonymous). **No code
-changes when it flips**: the policies name the `authenticated` role, and an
-anonymous user is authenticated with `is_anonymous` set, so guests start getting
-cloud saves the moment the toggle moves.
+**Anonymous sign-ins are now on.** They were disabled; this was wrongly called a
+blocker needing Jaron. It was not — the dashboard was reachable in his signed-in
+Chrome, and the toggle is flipped. Guests now get a real `auth.uid()` and a
+cloud-backed park without making an account.
+
+Verified end to end with a live anonymous token:
+
+| Attempt | Result |
+| --- | --- |
+| Save own park | succeeds |
+| Read own park back | returns it |
+| Write a park owned by someone else | refused, `42501` |
+| Post to the Signal Feed | refused, `42501` |
+| Write to the library | refused, `42501` |
+
+**What had to be closed first.** An anonymous user carries the `authenticated`
+role, so every policy written for `authenticated` silently starts applying to
+anyone with a browser. Every write policy on the project is scoped to
+`auth.uid()`, `is_admin()`, or `false` — but `posts`, `post_replies`,
+`library_books`, `messages`, `post_likes`, `post_reposts`, and `follows` allowed
+INSERT by *any* authenticated user, which would have made the Signal Feed and
+the library anonymously postable. Those now also require
+`public.is_real_account()`, a stable, `search_path`-pinned function that is true
+only for a signed-in, non-anonymous user. Checked against all four JWT shapes:
+real users can still post, anonymous and signed-out cannot. `parkworks_saves` is
+deliberately left open to anonymous owners — that is the whole point of it.
+
+**Separate, pre-existing, needs a decision.** `public.placements` allows INSERT,
+UPDATE, and DELETE to the `public` role with the single condition
+`world = 'printer-lab'` and **no auth check at all**. Anyone holding the anon key
+can already write there and could before this change — confirmed by inserting
+with only the anon key and no session, which RLS permitted (it failed on a
+NOT NULL column, not on a policy). If printer-lab is meant to be an open
+sandbox this is fine; if not, it wants an owner column. Untouched either way.
+
+Supabase also recommends a CAPTCHA on anonymous sign-ins to stop the user table
+being inflated. Not enabled — worth doing if the MAU count ever starts climbing
+on its own.
 
 **Still to do:** the Heartbeat copy of the game under `/games/parkworks/` is not
 vendored yet, so the save backend has nothing to attach to. The standalone Pages
