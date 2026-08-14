@@ -23,6 +23,7 @@ import {
 } from 'three';
 import { ParkSimulation } from '../core/ParkSimulation';
 import { ParkGrid, type CellBounds, type GridCell, type SurfaceOperationQuote } from '../core/ParkGrid';
+import { totalParkAppeal, type AppealContribution } from '../core/appeal';
 import { getPlaceableSpec } from '../core/catalog';
 import {
   computeAwayProgress,
@@ -765,20 +766,26 @@ export class ParkGame {
     const profile = createEmptyAwayProfile();
     const revenueWeighted: Record<ServicedNeed, number> = { hunger: 0, fun: 0, bladder: 0, rest: 0 };
     const acceptanceWeighted: Record<ServicedNeed, number> = { hunger: 0, fun: 0, bladder: 0, rest: 0 };
+    const contributions: AppealContribution[] = this.placedObjects.map((placed) => ({
+      spec: placed.spec,
+      position: placed.position,
+      connected: placed.spec.serviceNeed === null || placed.object.userData.connected !== false,
+    }));
+    // The same total the live spawner uses, from the same function, so an
+    // absence draws the crowd the park was drawing when the player closed it.
+    profile.appeal = totalParkAppeal(contributions);
 
-    for (const placed of this.placedObjects) {
+    for (const [index, placed] of this.placedObjects.entries()) {
       const spec = placed.spec;
       profile.upkeepPerCycle += spec.upkeep;
 
-      const connected = spec.serviceNeed === null || placed.object.userData.connected !== false;
-      if (!connected) continue;
-      profile.appeal += spec.appeal;
+      if (!contributions[index]?.connected) continue;
 
       if (spec.serviceNeed === 'trash') profile.binCount += 1;
       if (spec.category === 'food') profile.foodCount += 1;
 
       const need = spec.serviceNeed;
-      if (need === null || need === 'trash' || need === 'information') continue;
+      if (need === null || need === 'trash' || need === 'information' || need === 'cash') continue;
       if (spec.serviceSeconds <= 0 || spec.capacity <= 0) continue;
 
       const throughput = spec.capacity / spec.serviceSeconds;
@@ -1091,10 +1098,14 @@ export class ParkGame {
         };
       });
     this.simulation.setFacilities(snapshots);
-    const appeal = this.placedObjects.reduce((total, placed) => {
-      const connected = placed.spec.serviceNeed === null || connectivityById.get(placed.id)?.connected;
-      return total + (connected ? placed.spec.appeal : 0);
-    }, 0);
+    const appeal = totalParkAppeal(
+      this.placedObjects.map((placed) => ({
+        spec: placed.spec,
+        position: placed.position,
+        connected:
+          placed.spec.serviceNeed === null || connectivityById.get(placed.id)?.connected === true,
+      })),
+    );
     const upkeep = this.placedObjects.reduce((total, placed) => total + placed.spec.upkeep, 0);
     this.simulation.setParkMetrics(appeal, upkeep);
   }

@@ -61,14 +61,18 @@ describe('procedural placeable assets', () => {
     'burger-kiosk',
     'lemonade-stand',
     'ice-cream-cart',
+    'pizza-kitchen',
     'carousel',
     'sky-wheel',
     'bumper-cars',
     'drop-tower',
     'pirate-ship',
+    'mini-railway',
+    'meteor-coaster',
     'restroom',
     'first-aid',
     'information-booth',
+    'cash-machine',
   ] as const)(
     '%s exposes secondary and tertiary construction layers',
     (kind) => {
@@ -81,17 +85,19 @@ describe('procedural placeable assets', () => {
     },
   );
 
-  it.each(['bumper-cars', 'drop-tower', 'pirate-ship'] as const)(
+  const ANIMATION_PIVOTS = {
+    'bumper-cars': 'bumper car animation pivot 1',
+    'drop-tower': 'guided drop carriage animation pivot',
+    'pirate-ship': 'pirate ship swing animation pivot',
+    'mini-railway': 'miniature railway train animation pivot',
+    'meteor-coaster': 'meteor coaster train animation pivot',
+  } as const;
+
+  it.each(Object.keys(ANIMATION_PIVOTS) as Array<keyof typeof ANIMATION_PIVOTS>)(
     '%s provides an operating animation pivot that moves',
     (kind) => {
       const report = inspectAsset(kind);
-      const pivot = report.object.getObjectByName(
-        kind === 'bumper-cars'
-          ? 'bumper car animation pivot 1'
-          : kind === 'drop-tower'
-            ? 'guided drop carriage animation pivot'
-            : 'pirate ship swing animation pivot',
-      );
+      const pivot = report.object.getObjectByName(ANIMATION_PIVOTS[kind]);
       expect(report.object.userData.animated).toBe(true);
       expect(typeof report.object.userData.animate).toBe('function');
       expect(pivot).toBeDefined();
@@ -103,9 +109,49 @@ describe('procedural placeable assets', () => {
     },
   );
 
+  // A vehicle on a track has one failure that a swinging or spinning ride does
+  // not: it can leave the rails. Running a full circuit and watching where the
+  // train ends up catches a broken frame or a curve the animation walks off.
+  it.each(['mini-railway', 'meteor-coaster'] as const)(
+    '%s keeps its train on the track for a full circuit',
+    (kind) => {
+      const report = inspectAsset(kind);
+      const train = report.object.getObjectByName(ANIMATION_PIVOTS[kind]);
+      expect(train).toBeDefined();
+      if (!train) return;
+
+      const railHeight = kind === 'mini-railway' ? 0.36 : 1.9;
+      let travelled = 0;
+      for (let step = 0; step < 900; step += 1) {
+        factory.animate(report.object, step * 0.05, 0.05, 1);
+        const { x, y, z } = train.position;
+        expect(Number.isFinite(x + y + z)).toBe(true);
+        expect(y).toBeGreaterThan(railHeight - 0.9);
+        expect(y).toBeLessThan(11.5);
+        expect(Math.hypot(x, z)).toBeLessThan(9.5);
+        // Neither ride has an inversion, so the car's own up axis stays up.
+        // The bar allows a hard banked turn taken on a steep drop — the two
+        // tilts compound — and nothing beyond it.
+        const up = new Vector3(0, 1, 0).applyQuaternion(train.quaternion);
+        expect(up.y).toBeGreaterThan(0.45);
+        travelled += Math.hypot(x, z);
+      }
+      expect(travelled).toBeGreaterThan(0);
+    },
+  );
+
+  it('lands the fountain and the planter on the ground with their own detail', () => {
+    for (const kind of ['tiered-fountain', 'blossom-planter'] as const) {
+      const report = inspectAsset(kind);
+      expect(report.bounds.min.y).toBeGreaterThanOrEqual(-0.02);
+      expect(report.meshes).toBeGreaterThan(20);
+      expect(report.names.some((name) => /blossom|water|ripple|jet|slat|rib|coping/.test(name))).toBe(true);
+    }
+  });
+
   it('keeps the expanded ride set inside the mobile geometry budget', () => {
     const mobileFactory = new AssetFactory({ materials, quality: 'mobile' });
-    for (const kind of ['bumper-cars', 'drop-tower', 'pirate-ship'] as const) {
+    for (const kind of ['bumper-cars', 'drop-tower', 'pirate-ship', 'mini-railway', 'meteor-coaster'] as const) {
       const object = mobileFactory.createPlaceable(kind);
       let triangles = 0;
       object.traverse((child) => {

@@ -1,5 +1,6 @@
 import {
   CanvasTexture,
+  CatmullRomCurve3,
   Color,
   ConeGeometry,
   CylinderGeometry,
@@ -17,6 +18,7 @@ import {
   SphereGeometry,
   SRGBColorSpace,
   TorusGeometry,
+  TubeGeometry,
   Vector3,
   type Material,
   type Texture,
@@ -69,6 +71,35 @@ export interface AssetAnimationContext {
 export type AssetAnimationHook = (context: AssetAnimationContext) => void;
 
 const ZERO_ROTATION: XYZ = [0, 0, 0];
+const WORLD_UP = new Vector3(0, 1, 0);
+
+/** One sample along a track: where the rails are and how a vehicle sits on them. */
+interface TrackFrame {
+  position: Vector3;
+  forward: Vector3;
+  right: Vector3;
+  up: Vector3;
+}
+
+interface TrackOptions {
+  name: string;
+  /** Centre-to-centre distance between the running rails. */
+  gauge: number;
+  railRadius: number;
+  railMaterial: Material;
+  tie: {
+    size: XYZ;
+    /** Signed height from the centreline, so ties can hang under the rails. */
+    offset: number;
+    perMetre: number;
+    material: Material;
+  };
+  /** A steel circuit carries its rails on a spine tube; a railway sits on ballast. */
+  spine?: { radius: number; offset: number; material: Material };
+  /** 0 leaves the track level; higher values roll harder into the turns. */
+  bankStrength: number;
+  samples: number;
+}
 const SHIRT_PALETTE = [
   0x315c85,
   0xb84a3c,
@@ -299,6 +330,9 @@ export class AssetFactory {
       case 'ice-cream-cart':
         asset = this.createIceCreamCart();
         break;
+      case 'pizza-kitchen':
+        asset = this.createPizzaKitchen();
+        break;
       case 'carousel':
         asset = this.createCarousel();
         break;
@@ -314,6 +348,12 @@ export class AssetFactory {
       case 'pirate-ship':
         asset = this.createPirateShip();
         break;
+      case 'mini-railway':
+        asset = this.createMiniRailway();
+        break;
+      case 'meteor-coaster':
+        asset = this.createMeteorCoaster();
+        break;
       case 'restroom':
         asset = this.createRestroom();
         break;
@@ -322,6 +362,9 @@ export class AssetFactory {
         break;
       case 'information-booth':
         asset = this.createInformationBooth();
+        break;
+      case 'cash-machine':
+        asset = this.createCashMachine();
         break;
       case 'trash-bin':
         asset = this.createTrashBin();
@@ -334,6 +377,12 @@ export class AssetFactory {
         break;
       case 'shade-tree':
         asset = this.createShadeTree();
+        break;
+      case 'tiered-fountain':
+        asset = this.createTieredFountain();
+        break;
+      case 'blossom-planter':
+        asset = this.createBlossomPlanter();
         break;
       default:
         asset = assertNever(kind);
@@ -562,6 +611,151 @@ export class AssetFactory {
     addBox(root, [0.38, 0.05, 0.22], [-0.72, 1.83, 0.61], galvanized, 'cup dispenser lip', 0.012, ZERO_ROTATION, false, false);
 
     root.userData.counterPoints = [[0, 0, 1.75]];
+    return root;
+  }
+
+  createPizzaKitchen(): Group {
+    const root = makeRoot('Ember Stone Pizzeria', 'placeable');
+    const concrete = this.materials.get('concrete');
+    const brick = this.materials.get('brick');
+    const cream = this.materials.get('paintCream');
+    const teal = this.materials.get('paintTeal');
+    const red = this.materials.get('paintRed');
+    const dark = this.materials.get('steelDark');
+    const steel = this.materials.get('steel');
+    const copper = this.materials.get('copper');
+    const timber = this.materials.get('timber');
+    const glass = this.materials.get('glass');
+    const glow = this.materials.get('lampGlow');
+
+    addBox(root, [5.9, 0.18, 4.85], [0, 0.09, 0], concrete, 'terrace foundation slab', 0.07, ZERO_ROTATION, false, true);
+    addBox(root, [5.5, 0.5, 2.95], [0, 0.33, -0.95], brick, 'masonry plinth course', 0.04);
+    addBox(root, [5.3, 2.3, 0.2], [0, 1.68, -2.32], cream, 'rear stucco wall', 0.045);
+    addBox(root, [0.2, 2.3, 2.9], [-2.6, 1.68, -0.95], cream, 'left stucco wall', 0.045);
+    addBox(root, [0.2, 2.3, 2.9], [2.6, 1.68, -0.95], cream, 'right stucco wall', 0.045);
+    addBox(root, [1.0, 2.3, 0.2], [-2.2, 1.68, 0.42], cream, 'left service opening pier', 0.045);
+    addBox(root, [1.0, 2.3, 0.2], [2.2, 1.68, 0.42], cream, 'right service opening pier', 0.045);
+    addBox(root, [5.3, 0.52, 0.2], [0, 2.57, 0.42], cream, 'service opening lintel', 0.045);
+    addBox(root, [5.5, 0.1, 3.05], [0, 0.6, -0.95], concrete, 'plinth weather course', 0.02, ZERO_ROTATION, false, true);
+
+    addBox(root, [3.35, 0.95, 0.44], [0, 1.06, 0.4], brick, 'service counter base', 0.035);
+    addBox(root, [3.6, 0.14, 0.66], [0, 1.6, 0.46], concrete, 'honed stone counter top', 0.04);
+    addBox(root, [3.3, 0.52, 0.022], [0, 1.95, 0.56], glass, 'counter sneeze guard', 0.008, ZERO_ROTATION, false, false);
+    for (const x of [-1.62, 1.62]) {
+      addBox(root, [0.05, 0.5, 0.06], [x, 1.95, 0.56], steel, 'sneeze guard mullion', 0.012, ZERO_ROTATION, false, true);
+      addBolt(root, [x, 1.5, 0.79], steel, ZERO_ROTATION, 0.028);
+    }
+    addPanelSeams(root, 3.2, 1.06, 0.63, 4, copper);
+
+    // The oven sits where the counter opening frames it. A wood-fired dome the
+    // guest cannot see is a dome that may as well not be modelled.
+    const domeGeometry = new SphereGeometry(0.78, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2);
+    applyWorldUV(domeGeometry, 1);
+    ensureAmbientOcclusionUV(domeGeometry);
+    const dome = new Mesh(domeGeometry, brick);
+    dome.name = 'wood fired oven dome';
+    dome.position.set(-1.35, 1.02, -1.35);
+    dome.scale.set(1, 0.86, 1);
+    dome.castShadow = true;
+    dome.receiveShadow = true;
+    root.add(dome);
+    addCylinder(root, 0.88, 0.94, 0.16, [-1.35, 0.96, -1.35], concrete, 'oven hearth ring', ZERO_ROTATION, 18);
+    addBox(root, [0.56, 0.46, 0.24], [-1.35, 1.16, -0.62], dark, 'oven mouth arch', 0.12);
+    addBox(root, [0.4, 0.3, 0.06], [-1.35, 1.14, -0.56], glow, 'oven fire glow', 0.04, ZERO_ROTATION, false, false);
+    addCylinder(root, 0.13, 0.15, 1.35, [-1.35, 2.25, -1.35], copper, 'oven flue', ZERO_ROTATION, 12);
+    addBrace(root, [-1.9, 1.05, -1.35], [-1.35, 1.55, -0.95], 0.03, steel, 'oven peel handle', false);
+    for (let log = 0; log < 8; log += 1) {
+      addCylinder(
+        root,
+        0.07,
+        0.07,
+        0.52,
+        [-2.25, 0.68 + Math.floor(log / 4) * 0.15, -1.72 + (log % 4) * 0.16],
+        timber,
+        'seasoned firewood',
+        [0, Math.PI / 2, 0],
+        7,
+        false,
+        true,
+      );
+    }
+
+    // Roof: two pitched decks meeting at a ridge, with terracotta pantiles
+    // instanced along each. Half-round tiles sunk into the deck read correctly
+    // from the ground for a fraction of the geometry a modelled tile costs.
+    const pitch = 0.3;
+    const ridgeZ = -0.95;
+    for (const side of [-1, 1] as const) {
+      addBox(
+        root,
+        [5.95, 0.14, 1.52],
+        [0, 3.03, ridgeZ + side * 0.71],
+        timber,
+        'pitched roof deck',
+        0.035,
+        [side * pitch, 0, 0],
+      );
+    }
+    const tileCount = this.quality === 'high' ? 76 : 52;
+    const tileGeometry = new CylinderGeometry(0.078, 0.078, 1.48, 7, 1, false);
+    applyWorldUV(tileGeometry, 1);
+    ensureAmbientOcclusionUV(tileGeometry);
+    const tiles = new InstancedMesh(tileGeometry, copper, tileCount);
+    tiles.name = 'instanced terracotta pantile';
+    tiles.castShadow = true;
+    tiles.receiveShadow = true;
+    const perSide = Math.floor(tileCount / 2);
+    for (let index = 0; index < tileCount; index += 1) {
+      const side = index < perSide ? -1 : 1;
+      const column = index % perSide;
+      const x = -2.85 + (column / (perSide - 1)) * 5.7;
+      setInstance(
+        tiles,
+        index,
+        new Vector3(
+          x,
+          3.03 + Math.cos(pitch) * 0.11,
+          ridgeZ + side * 0.71 - side * Math.sin(pitch) * 0.11,
+        ),
+        new Quaternion().setFromEuler(new Euler(Math.PI / 2 + side * pitch, 0, 0)),
+      );
+    }
+    tiles.instanceMatrix.needsUpdate = true;
+    root.add(tiles);
+    addCylinder(root, 0.13, 0.13, 5.95, [0, 3.34, ridgeZ], copper, 'ridge capping', [0, 0, Math.PI / 2], 10);
+    addCylinder(root, 0.075, 0.075, 5.9, [0, 2.78, 0.55], steel, 'eaves gutter', [0, 0, Math.PI / 2], 8, false, true);
+    addBox(root, [0.1, 2.2, 0.1], [2.72, 1.7, 0.5], steel, 'rainwater downspout', 0.02, ZERO_ROTATION, false, true);
+    addBox(root, [0.68, 1.55, 0.68], [1.5, 3.6, -1.75], brick, 'flue chimney stack', 0.04);
+    addBox(root, [0.82, 0.14, 0.82], [1.5, 4.42, -1.75], concrete, 'chimney capping slab', 0.03);
+    addCylinder(root, 0.16, 0.2, 0.3, [1.5, 4.62, -1.75], copper, 'chimney cowl', ZERO_ROTATION, 12, false, true);
+
+    addBox(root, [4.1, 0.12, 0.95], [0, 2.42, 1.0], red, 'counter awning deck', 0.03, [-0.16, 0, 0]);
+    addBox(root, [4.2, 0.1, 0.09], [0, 2.34, 1.44], cream, 'awning front rail', 0.02, ZERO_ROTATION, false, false);
+    for (const x of [-1.85, 1.85]) {
+      addBrace(root, [x, 2.6, 0.55], [x, 2.4, 1.4], 0.028, dark, 'awning stay', false);
+    }
+    for (const x of [-1.05, 0, 1.05]) {
+      addCylinder(root, 0.16, 0.09, 0.2, [x, 2.28, 0.28], teal, 'pendant lamp shade', ZERO_ROTATION, 12, false, true);
+      addBrace(root, [x, 2.5, 0.28], [x, 2.32, 0.28], 0.012, dark, 'pendant lamp flex', false);
+      addSphere(root, 0.065, [x, 2.19, 0.28], glow, 'pendant lamp bulb', [1, 0.9, 1], false, 8);
+    }
+    addBox(root, [1.5, 0.7, 0.05], [1.6, 2.0, 0.31], dark, 'chalk menu board', 0.02, ZERO_ROTATION, false, true);
+    for (let line = 0; line < 4; line += 1) {
+      addBox(root, [1.0 - line * 0.12, 0.045, 0.02], [1.55, 2.24 - line * 0.16, 0.28], cream, 'menu chalk line', 0.006, ZERO_ROTATION, false, false);
+    }
+    this.addSign(root, 'EMBER STONE', [2.5, 0.46], [0, 2.57, 0.53], 0x7c2f28, 0xf6ddb0, 'WOOD FIRED PIZZA');
+
+    for (const x of [-1.72, 1.72]) {
+      addCylinder(root, 0.09, 0.16, 0.72, [x, 0.45, 1.62], dark, 'terrace table column', ZERO_ROTATION, 10);
+      addCylinder(root, 0.44, 0.44, 0.07, [x, 0.84, 1.62], timber, 'terrace table top', ZERO_ROTATION, 18);
+      addCylinder(root, 0.34, 0.34, 0.05, [x, 0.11, 1.62], steel, 'table base plate', ZERO_ROTATION, 14, false, true);
+      for (const offset of [-0.72, 0.72]) {
+        addCylinder(root, 0.2, 0.2, 0.07, [x + offset, 0.53, 1.62], teal, 'terrace stool seat', ZERO_ROTATION, 12);
+        addCylinder(root, 0.06, 0.09, 0.48, [x + offset, 0.27, 1.62], dark, 'terrace stool column', ZERO_ROTATION, 8);
+      }
+    }
+
+    root.userData.counterPoints = [[-0.7, 0, 2.15], [0.7, 0, 2.15]];
     return root;
   }
 
@@ -1086,6 +1280,296 @@ export class AssetFactory {
     return root;
   }
 
+  createMiniRailway(): Group {
+    const root = makeRoot('Willow Line Railway', 'placeable');
+    const concrete = this.materials.get('concrete');
+    // Ballast is crushed grey stone, not earth: against dark creosoted sleepers
+    // it is the contrast that makes a track read as track from standing height.
+    const ballastStone = this.materials.get('concreteDark');
+    const sleeper = this.materials.get('timber');
+    const steel = this.materials.get('galvanized');
+    const dark = this.materials.get('steelDark');
+    const galvanized = this.materials.get('galvanized');
+    const timber = this.materials.get('timber');
+    const cream = this.materials.get('paintCream');
+    const green = this.materials.get('paintGreen');
+    const red = this.materials.get('paintRed');
+    const brass = this.materials.get('brass');
+    const glow = this.materials.get('lampGlow');
+    const samples = this.quality === 'high' ? 180 : 120;
+
+    // A closed oval of 15-inch-gauge track. The centreline sits at sleeper-top
+    // height so everything else — ballast under, rails on top — is measured
+    // from the surface a train actually runs on.
+    const centreline: Vector3[] = [];
+    for (let index = 0; index < 12; index += 1) {
+      const angle = (index / 12) * Math.PI * 2;
+      centreline.push(new Vector3(Math.sin(angle) * 4.55, 0.34, Math.cos(angle) * 3.05));
+    }
+    const circuit = new CatmullRomCurve3(centreline, true, 'catmullrom', 0.5);
+    const length = circuit.getLength();
+
+    const ballastCount = Math.round(length / 1.08);
+    const ballastGeometry = new RoundedBoxGeometry(1.72, 0.22, 1.02, 1, 0.05);
+    applyWorldUV(ballastGeometry, 1);
+    ensureAmbientOcclusionUV(ballastGeometry);
+    const ballast = new InstancedMesh(ballastGeometry, ballastStone, ballastCount);
+    ballast.name = 'instanced ballast bed panel';
+    ballast.receiveShadow = true;
+    for (let index = 0; index < ballastCount; index += 1) {
+      const frame = this.trackFrameAt(circuit, index / ballastCount, 0);
+      setInstance(
+        ballast,
+        index,
+        new Vector3(frame.position.x, 0.11, frame.position.z),
+        new Quaternion().setFromRotationMatrix(
+          new Matrix4().makeBasis(frame.right, frame.up, frame.forward),
+        ),
+      );
+    }
+    ballast.instanceMatrix.needsUpdate = true;
+    root.add(ballast);
+
+    this.addTrack(root, circuit, {
+      name: 'railway',
+      gauge: 0.78,
+      railRadius: 0.045,
+      railMaterial: steel,
+      tie: { size: [1.2, 0.1, 0.22], offset: -0.075, perMetre: 2.1, material: sleeper },
+      bankStrength: 0,
+      samples,
+    });
+
+    addBox(root, [5.4, 0.32, 1.3], [0, 0.16, 4.35], concrete, 'station platform slab', 0.05, ZERO_ROTATION, false, true);
+    addBox(root, [5.4, 0.09, 0.16], [0, 0.36, 3.78], cream, 'platform edge coping', 0.02, ZERO_ROTATION, false, true);
+    for (let mark = -2; mark <= 2; mark += 1) {
+      addBox(root, [0.5, 0.02, 0.07], [mark * 1.0, 0.33, 3.62], red, 'platform safety line', 0.006, ZERO_ROTATION, false, false);
+    }
+    for (const x of [-2.25, 2.25]) {
+      addBox(root, [0.1, 2.25, 0.1], [x, 1.45, 4.05], dark, 'canopy support post', 0.022);
+      addBox(root, [0.1, 2.25, 0.1], [x, 1.45, 4.78], dark, 'canopy support post', 0.022);
+      addBrace(root, [x, 2.3, 4.05], [x + Math.sign(x) * -0.42, 2.58, 4.42], 0.028, steel, 'canopy knee brace', false);
+      addBolt(root, [x, 0.42, 4.05], galvanized, ZERO_ROTATION, 0.03);
+    }
+    addBox(root, [5.2, 0.14, 1.5], [0, 2.66, 4.42], green, 'station canopy deck', 0.045, [-0.06, 0, 0]);
+    addBox(root, [5.35, 0.16, 0.14], [0, 2.62, 3.71], cream, 'canopy valance board', 0.03, ZERO_ROTATION, false, true);
+    for (let seam = -2; seam <= 2; seam += 1) {
+      addBox(root, [0.035, 0.045, 1.45], [seam * 1.05, 2.75, 4.42], steel, 'canopy standing seam', 0.008, [-0.06, 0, 0], false, false);
+    }
+    addBox(root, [1.6, 0.09, 0.42], [-1.5, 0.7, 4.62], timber, 'platform bench seat', 0.03);
+    addBox(root, [1.6, 0.36, 0.07], [-1.5, 0.88, 4.83], timber, 'platform bench back', 0.025);
+    for (const x of [-2.15, -0.85]) addBox(root, [0.08, 0.36, 0.34], [x, 0.52, 4.62], dark, 'bench cast frame', 0.02);
+    addCylinder(root, 0.14, 0.1, 0.16, [2.6, 2.34, 4.12], brass, 'platform departure bell', ZERO_ROTATION, 12, false, true);
+    addBrace(root, [2.6, 2.56, 4.12], [2.6, 2.4, 4.12], 0.02, dark, 'bell hanger', false);
+    addBox(root, [1.05, 0.62, 0.08], [1.75, 1.62, 4.7], dark, 'departure board', 0.025, ZERO_ROTATION, false, true);
+    for (let row = 0; row < 3; row += 1) {
+      addBox(root, [0.78, 0.09, 0.02], [1.75, 1.82 - row * 0.19, 4.65], row === 0 ? glow : cream, 'departure board line', 0.006, ZERO_ROTATION, false, false);
+    }
+    this.addSign(root, 'WILLOW LINE', [2.4, 0.44], [0, 2.36, 3.66], 0x2f5c3a, 0xf3e3b8, 'NARROW GAUGE RAILWAY');
+
+    addCylinder(root, 0.09, 0.11, 2.35, [4.0, 1.18, 3.35], dark, 'signal post', ZERO_ROTATION, 10);
+    addBox(root, [0.3, 0.62, 0.16], [4.0, 2.5, 3.42], dark, 'signal head', 0.04);
+    addSphere(root, 0.075, [4.0, 2.66, 3.52], glow, 'signal clear lamp', [1, 1, 0.6], false, 8);
+    addSphere(root, 0.075, [4.0, 2.36, 3.52], red, 'signal stop lamp', [1, 1, 0.6], false, 8);
+    addBox(root, [0.42, 0.12, 0.42], [4.0, 0.06, 3.35], concrete, 'signal post footing', 0.03, ZERO_ROTATION, false, true);
+    for (const [x, z] of [[-5.62, 0.4], [5.62, -0.4]] as const) {
+      addBox(root, [0.5, 0.72, 0.5], [x, 0.36, z], timber, 'lineside tool locker', 0.05);
+      addBox(root, [0.56, 0.08, 0.56], [x, 0.76, z], dark, 'locker lid', 0.02, ZERO_ROTATION, false, true);
+    }
+
+    const locomotive = this.buildRailwayLocomotive();
+    root.add(locomotive);
+    const carriages = [1, 2].map((index) => {
+      const carriage = this.buildRailwayCarriage(index);
+      root.add(carriage);
+      return carriage;
+    });
+
+    // Vehicle spacing is in metres of track, converted to curve parameter, so
+    // the rake stays coupled through the curves instead of concertinaing.
+    const spacing = [0, 2.35, 4.35].map((metres) => metres / length);
+    let travelled = 0.62;
+    const place = (): void => {
+      this.setOnTrack(locomotive, this.trackFrameAt(circuit, travelled - spacing[0], 0), 0.02);
+      for (const [index, carriage] of carriages.entries()) {
+        this.setOnTrack(carriage, this.trackFrameAt(circuit, travelled - spacing[index + 1], 0), 0.02);
+      }
+    };
+    place();
+
+    root.userData.entryPoints = [[0, 0, 5.1]];
+    root.userData.operating = true;
+    root.userData.animationPivot = locomotive.name;
+    this.registerAnimation(root, ({ delta, activity }) => {
+      if (root.userData.operating === false) return;
+      // 2.4 m/s is a walking-pace park railway; the ride is the circuit, not the speed.
+      travelled = (travelled + (delta * 2.4 * activity) / length) % 1;
+      place();
+    });
+    return root;
+  }
+
+  createMeteorCoaster(): Group {
+    const root = makeRoot('Meteor Chase', 'placeable');
+    const concrete = this.materials.get('concrete');
+    const dark = this.materials.get('steelDark');
+    const steel = this.materials.get('galvanized');
+    // Running rails are galvanised rather than bright steel: at 0.86 metalness
+    // and no environment map, polished steel reads as a black line against the
+    // sky, which is the one thing a coaster's silhouette cannot afford.
+    const rail = this.materials.get('galvanized');
+    const teal = this.materials.get('paintTeal');
+    const red = this.materials.get('paintRed');
+    const yellow = this.materials.get('paintYellow');
+    const cream = this.materials.get('paintCream');
+    const blue = this.materials.get('paintBlue');
+    const glow = this.materials.get('lampGlow');
+    const samples = this.quality === 'high' ? 240 : 160;
+
+    // The layout, as a rider takes it: out of the station, up the chain lift at
+    // the back of the plot, over the crest, down the first drop, through an
+    // airtime hill, then a banked helix that passes under its own first drop
+    // before the brake run. The crossing is deliberate — a circuit that folds
+    // over itself is what makes a coaster read as a coaster from the ground.
+    const layout: XYZ[] = [
+      [-4.6, 1.55, 5.05],
+      [0, 1.55, 5.15],
+      [4.55, 1.62, 5.0],
+      [6.55, 3.15, 2.4],
+      [6.85, 5.95, -0.6],
+      [5.35, 8.55, -3.4],
+      [2.35, 9.15, -4.85],
+      [-1.0, 5.6, -4.55],
+      [-3.4, 2.05, -2.95],
+      [-4.2, 3.6, -0.4],
+      [-2.6, 4.85, 1.85],
+      [0.65, 2.95, 3.0],
+      [3.4, 2.6, 1.4],
+      [2.0, 2.2, -1.4],
+      [-1.2, 2.0, -1.85],
+      [-3.6, 1.9, 0.6],
+      [-5.65, 1.7, 3.0],
+    ];
+    const circuit = new CatmullRomCurve3(
+      layout.map((point) => new Vector3(...point)),
+      true,
+      'catmullrom',
+      0.5,
+    );
+    const length = circuit.getLength();
+    const crestHeight = 9.15;
+
+    const frames = this.addTrack(root, circuit, {
+      name: 'coaster',
+      gauge: 0.86,
+      railRadius: 0.062,
+      railMaterial: rail,
+      tie: { size: [1.05, 0.075, 0.1], offset: -0.12, perMetre: 1.1, material: dark },
+      spine: { radius: 0.14, offset: -0.52, material: teal },
+      bankStrength: 6.5,
+      samples,
+    });
+    this.addTrackSupports(root, frames, dark, steel, concrete, this.quality === 'high' ? 9 : 13);
+
+    // Chain lift: the dogs the train's anti-rollback rides over, laid between
+    // the two curve parameters where the track is actually climbing.
+    const chainPoints = this.trackSection(circuit, 0.175, 0.315, 26);
+    const chainCurve = new CatmullRomCurve3(chainPoints, false, 'catmullrom', 0.5);
+    const chainGeometry = new TubeGeometry(chainCurve, 40, 0.035, 6, false);
+    applyWorldUV(chainGeometry, 1);
+    ensureAmbientOcclusionUV(chainGeometry);
+    const chain = new Mesh(chainGeometry, steel);
+    chain.name = 'lift hill drive chain';
+    chain.castShadow = true;
+    chain.position.y = -0.2;
+    root.add(chain);
+    for (let index = 0; index <= 12; index += 1) {
+      const point = chainCurve.getPointAt(index / 12);
+      addBox(root, [0.3, 0.06, 0.12], [point.x, point.y - 0.28, point.z], yellow, 'anti rollback ratchet', 0.014, ZERO_ROTATION, false, false);
+    }
+    addBox(root, [1.5, 0.9, 1.2], [3.0, 9.35, -5.55], teal, 'lift drive machinery house', 0.08);
+    addBox(root, [1.65, 0.16, 1.35], [3.0, 9.86, -5.55], dark, 'machinery house roof', 0.04);
+    addCylinder(root, 0.34, 0.34, 0.9, [2.05, 9.3, -5.55], steel, 'chain drive sheave', [0, 0, Math.PI / 2], 14);
+    addSphere(root, 0.16, [3.0, 10.1, -5.55], glow, 'circuit warning beacon', [1, 0.9, 1], false, 10);
+
+    // Brake fins along the run back into the station, in pairs either side.
+    for (let index = 0; index <= 9; index += 1) {
+      const frame = this.trackFrameAt(circuit, 0.955 + index * 0.0055, 6.5);
+      for (const side of [-1, 1] as const) {
+        const at = frame.position.clone().addScaledVector(frame.right, side * 0.62).addScaledVector(frame.up, -0.16);
+        addBox(root, [0.06, 0.3, 0.44], [at.x, at.y, at.z], yellow, 'magnetic brake fin', 0.012, ZERO_ROTATION, false, false);
+      }
+    }
+
+    addBox(root, [9.4, 0.24, 7.2], [-0.4, 0.12, 1.0], concrete, 'ride foundation slab', 0.09, ZERO_ROTATION, false, true);
+    // Two platforms, one either side of the running line, rather than one slab
+    // the track would pass through. The corridor between them is set by the car
+    // body plus the hand's breadth of platform gap a real station leaves.
+    for (const [z, side] of [[3.75, 'boarding'], [6.45, 'unloading']] as const) {
+      addBox(root, [6.6, 1.3, 1.1], [-0.4, 0.78, z], concrete, `${side} platform substructure`, 0.06);
+      addBox(root, [6.9, 0.16, 1.35], [-0.4, 1.5, z], dark, `${side} platform deck`, 0.045);
+      addBox(root, [6.9, 0.1, 0.13], [-0.4, 1.62, z + (z < 5 ? 0.61 : -0.61)], yellow, `${side} platform edge marking`, 0.02, ZERO_ROTATION, false, true);
+    }
+    for (const x of [-3.5, -1.1, 1.3, 3.7]) {
+      addBox(root, [0.14, 2.6, 0.14], [x, 2.88, 6.78], dark, 'station roof column', 0.03);
+      addBox(root, [0.14, 2.6, 0.14], [x, 2.88, 3.42], dark, 'station roof column', 0.03);
+      addBrace(root, [x, 4.1, 6.78], [x, 4.42, 6.1], 0.035, steel, 'station roof knee brace', false);
+      addBolt(root, [x, 1.7, 6.78], steel, ZERO_ROTATION, 0.032);
+    }
+    addBox(root, [7.4, 0.18, 3.7], [-0.4, 4.5, 5.1], dark, 'station roof beam frame', 0.04);
+    for (let bay = 0; bay < 5; bay += 1) {
+      addBox(root, [1.44, 0.11, 3.6], [-3.35 + bay * 1.48, 4.66, 5.1], bay % 2 === 0 ? cream : teal, 'station canopy panel', 0.03, [0, 0, (bay - 2) * 0.012], false, true);
+      addBox(root, [0.035, 0.04, 3.55], [-2.63 + bay * 1.48, 4.73, 5.1], steel, 'canopy standing seam', 0.008, ZERO_ROTATION, false, false);
+    }
+    for (const x of [-2.6, 0, 2.6]) {
+      addBox(root, [1.5, 1.05, 0.09], [x, 2.15, 4.31], yellow, 'air gate leaf', 0.025);
+      addBox(root, [0.09, 1.2, 0.09], [x - 0.78, 2.2, 4.31], dark, 'air gate post', 0.02, ZERO_ROTATION, false, true);
+      addBox(root, [0.09, 1.2, 0.09], [x + 0.78, 2.2, 4.31], dark, 'air gate post', 0.02, ZERO_ROTATION, false, true);
+    }
+    addBox(root, [1.6, 1.1, 0.9], [-4.6, 2.05, 3.7], cream, 'coaster operator console housing', 0.06);
+    addBox(root, [1.15, 0.38, 0.025], [-4.6, 2.24, 3.25], dark, 'coaster operator control panel', 0.01, ZERO_ROTATION, false, true);
+    for (const x of [-4.9, -4.6, -4.3]) addSphere(root, 0.05, [x, 2.33, 3.22], x === -4.6 ? glow : red, 'dispatch indicator', [1, 0.45, 1], false, 8);
+    addBox(root, [1.4, 0.9, 0.12], [-2.4, 1.05, 2.85], dark, 'station access stair stringer', 0.03, [-0.42, 0, 0]);
+    for (let step = 0; step < 4; step += 1) {
+      addBox(root, [1.4, 0.07, 0.34], [-2.4, 0.42 + step * 0.3, 2.45 + step * 0.32], concrete, 'station access step', 0.02, ZERO_ROTATION, false, true);
+    }
+    this.addSign(root, 'METEOR CHASE', [3.6, 0.6], [-0.4, 5.05, 3.24], 0x1f2f3c, 0xffd352, 'CHAIN LIFT • 9 METRE DROP');
+
+    const cars = [0, 1].map((index) => {
+      const car = this.buildCoasterCar(index, index === 0 ? red : blue, dark, steel, yellow, glow);
+      root.add(car);
+      return car;
+    });
+    const carSpacing = 2.5 / length;
+    let travelled = 0.02;
+    const place = (): void => {
+      for (const [index, car] of cars.entries()) {
+        this.setOnTrack(car, this.trackFrameAt(circuit, travelled - index * carSpacing, 6.5), 0.42);
+      }
+    };
+    place();
+
+    root.userData.entryPoints = [[-0.4, 0, 7.6]];
+    root.userData.operating = true;
+    root.userData.animationPivot = cars[0]?.name;
+    this.registerAnimation(root, ({ delta, activity }) => {
+      if (root.userData.operating === false) return;
+      const height = this.trackFrameAt(circuit, travelled, 0).position.y;
+      // Speed comes from the drop the train has taken, the way it does on the
+      // real thing: v = sqrt(2gh) from the crest, floored so it still crawls
+      // over the top, and overridden by the chain on the lift itself. This is
+      // why it hangs at the crest and tears through the bottom of the drop
+      // without a single hand-tuned keyframe.
+      const onLift = travelled > 0.17 && travelled < 0.32;
+      const speed = onLift
+        ? 2.1
+        : Math.min(19, Math.sqrt(Math.max(0.9, 2 * 9.81 * (crestHeight + 0.7 - height))));
+      travelled = (travelled + (delta * speed * activity) / length) % 1;
+      place();
+    });
+    return root;
+  }
+
   createRestroom(): Group {
     const root = makeRoot('Park Comfort Station', 'placeable');
     const concrete = this.materials.get('concrete');
@@ -1271,6 +1755,72 @@ export class AssetFactory {
     return root;
   }
 
+  createCashMachine(): Group {
+    const root = makeRoot('Ledger Point Cash Machine', 'placeable');
+    const concreteDark = this.materials.get('concreteDark');
+    const concrete = this.materials.get('concrete');
+    const dark = this.materials.get('steelDark');
+    const steel = this.materials.get('steel');
+    const galvanized = this.materials.get('galvanized');
+    const teal = this.materials.get('paintTeal');
+    const yellow = this.materials.get('paintYellow');
+    const rubber = this.materials.get('rubber');
+    const brass = this.materials.get('brass');
+    const glass = this.materials.get('glass');
+    const glow = this.materials.get('lampGlow');
+
+    addBox(root, [1.85, 0.12, 1.7], [0, 0.06, 0], concreteDark, 'machine anchor pad', 0.04, ZERO_ROTATION, false, true);
+    addBox(root, [1.02, 0.26, 0.76], [0, 0.25, -0.02], concrete, 'levelling plinth', 0.03);
+    addBox(root, [0.9, 1.5, 0.68], [0, 1.13, -0.02], dark, 'safe body enclosure', 0.06);
+    addBox(root, [0.82, 1.28, 0.05], [0, 1.22, 0.34], steel, 'stainless fascia panel', 0.02);
+    addBox(root, [0.9, 0.12, 0.72], [0, 1.94, -0.02], dark, 'enclosure top cap', 0.03);
+
+    addBox(root, [0.48, 0.36, 0.03], [0, 1.62, 0.372], dark, 'screen bezel', 0.012, ZERO_ROTATION, false, true);
+    addBox(root, [0.4, 0.29, 0.012], [0, 1.62, 0.381], glow, 'screen backlight', 0.004, ZERO_ROTATION, false, false);
+    addBox(root, [0.41, 0.3, 0.012], [0, 1.62, 0.392], glass, 'screen glazing', 0.004, ZERO_ROTATION, false, false);
+    for (const side of [-1, 1] as const) {
+      for (const y of [1.72, 1.62, 1.52]) {
+        addBox(root, [0.055, 0.03, 0.02], [side * 0.31, y, 0.375], teal, 'soft function key', 0.008, ZERO_ROTATION, false, false);
+      }
+    }
+    addBox(root, [0.34, 0.28, 0.035], [0, 1.28, 0.372], dark, 'keypad surround', 0.012, ZERO_ROTATION, false, true);
+    for (let key = 0; key < 12; key += 1) {
+      addBox(
+        root,
+        [0.055, 0.04, 0.02],
+        [-0.09 + (key % 3) * 0.09, 1.37 - Math.floor(key / 3) * 0.065, 0.385],
+        key === 10 ? teal : steel,
+        'keypad key',
+        0.008,
+        ZERO_ROTATION,
+        false,
+        false,
+      );
+    }
+    addBox(root, [0.14, 0.035, 0.05], [0.27, 1.4, 0.375], brass, 'card reader slot', 0.01, ZERO_ROTATION, false, true);
+    addBox(root, [0.15, 0.025, 0.05], [-0.27, 1.4, 0.375], steel, 'receipt printer slot', 0.008, ZERO_ROTATION, false, true);
+    addBox(root, [0.3, 0.06, 0.06], [0, 1.02, 0.375], rubber, 'cash dispenser lip', 0.014, ZERO_ROTATION, false, true);
+    addBox(root, [0.36, 0.02, 0.04], [0, 1.09, 0.38], steel, 'dispenser shutter', 0.006, ZERO_ROTATION, false, false);
+
+    addBox(root, [1.02, 0.1, 0.62], [0, 2.16, 0.24], dark, 'privacy hood', 0.03, [-0.14, 0, 0]);
+    for (const side of [-1, 1] as const) {
+      addBox(root, [0.06, 0.34, 0.56], [side * 0.48, 1.98, 0.22], dark, 'privacy hood cheek', 0.02, ZERO_ROTATION, false, true);
+      addBrace(root, [side * 0.44, 1.98, -0.3], [side * 0.44, 2.14, 0.18], 0.022, steel, 'hood support stay', false);
+      addCylinder(root, 0.085, 0.095, 0.86, [side * 0.76, 0.43, 0.42], galvanized, 'protective bollard', ZERO_ROTATION, 12);
+      addCylinder(root, 0.095, 0.095, 0.09, [side * 0.76, 0.7, 0.42], yellow, 'bollard reflective band', ZERO_ROTATION, 12, false, true);
+      addBolt(root, [side * 0.4, 0.34, 0.36], galvanized, ZERO_ROTATION, 0.032);
+      addBolt(root, [side * 0.4, 0.34, -0.38], galvanized, ZERO_ROTATION, 0.032);
+    }
+    addSphere(root, 0.055, [0, 2.05, 0.26], glow, 'hood service light', [1.6, 0.5, 1], false, 8);
+    addBox(root, [0.72, 1.05, 0.03], [0, 1.12, -0.375], steel, 'rear service door', 0.015, ZERO_ROTATION, false, true);
+    for (const y of [0.74, 1.5]) addBox(root, [0.05, 0.16, 0.03], [-0.3, y, -0.39], galvanized, 'service door hinge', 0.01, ZERO_ROTATION, false, false);
+    addCylinder(root, 0.045, 0.045, 0.05, [0.26, 1.12, -0.395], brass, 'service door lock', [Math.PI / 2, 0, 0], 10, false, true);
+    this.addSign(root, 'CASH', [0.74, 0.2], [0, 1.945, 0.372], 0x1f4f4f, 0xffe27f, 'WITHDRAWALS');
+
+    root.userData.counterPoints = [[0, 0, 1.15]];
+    return root;
+  }
+
   createTrashBin(): Group {
     const root = makeRoot('Sorting Bin', 'placeable');
     const dark = this.materials.get('steelDark');
@@ -1410,6 +1960,177 @@ export class AssetFactory {
       addBox(root, [0.055, 0.78, 0.055], [p.x, p.y, p.z], dark, 'tree guard upright', 0.015, ZERO_ROTATION, false, true);
     }
     root.userData.windResponsive = true;
+    return root;
+  }
+
+  createTieredFountain(): Group {
+    const root = makeRoot('Tiered Bronze Fountain', 'placeable');
+    const concrete = this.materials.get('concrete');
+    const concreteDark = this.materials.get('concreteDark');
+    // Cast bronze, not polished brass. The shared metals are near-fully
+    // metallic, and with no environment map to reflect a large metal bowl goes
+    // black; weathered bronze is a dielectric patina anyway, so a painted
+    // surface is both truer and readable in a shaded plaza.
+    const bronze = this.materials.paint(0xa8804a, 0.42);
+    const bronzeDark = this.materials.paint(0x7d5c31, 0.5);
+    const brass = this.materials.get('brass');
+    // Opaque, glossy, and slightly blue: water reads better as a bright surface
+    // than as transparency, which at this scale only sorts badly against the
+    // basin behind it.
+    const water = this.materials.paint(0x8fc4d4, 0.14);
+    const dark = this.materials.get('steelDark');
+    const segments = this.quality === 'high' ? 36 : 24;
+
+    addCylinder(root, 2.36, 2.42, 0.14, [0, 0.07, 0], concrete, 'basin foundation ring', ZERO_ROTATION, segments, false, true);
+    // The basin drum stops below the coping so the water surface can sit on top
+    // of it and still be seen: a wall taller than the water hides the water.
+    addCylinder(root, 2.16, 2.22, 0.46, [0, 0.23, 0], concrete, 'stone basin wall', ZERO_ROTATION, segments);
+    addCylinder(root, 2.03, 2.03, 0.02, [0, 0.48, 0], water, 'basin water surface', ZERO_ROTATION, segments, false, false);
+    addTorus(root, 2.16, 0.13, [0, 0.5, 0], concrete, 'basin coping ring', [Math.PI / 2, 0, 0], segments);
+    for (let seam = 0; seam < 8; seam += 1) {
+      const angle = (seam / 8) * Math.PI * 2;
+      const at = polar(2.2, angle, 0.24);
+      addBox(root, [0.05, 0.42, 0.05], [at.x, at.y, at.z], concreteDark, 'basin masonry joint', 0.012, [0, -angle, 0], false, false);
+    }
+
+    addCylinder(root, 0.52, 0.66, 0.78, [0, 0.89, 0], concreteDark, 'fountain pedestal', ZERO_ROTATION, 18);
+    addTorus(root, 0.56, 0.07, [0, 1.24, 0], bronze, 'pedestal collar', [Math.PI / 2, 0, 0], 20, false);
+    addCylinder(root, 1.24, 0.56, 0.42, [0, 1.46, 0], bronze, 'lower bronze bowl', ZERO_ROTATION, 24);
+    addTorus(root, 1.24, 0.07, [0, 1.65, 0], bronzeDark, 'lower bowl rim', [Math.PI / 2, 0, 0], 28);
+    for (let rib = 0; rib < 10; rib += 1) {
+      const angle = (rib / 10) * Math.PI * 2;
+      const outer = polar(1.16, angle, 1.34);
+      addBrace(root, [0, 1.2, 0], [outer.x, outer.y, outer.z], 0.035, bronzeDark, 'bowl support rib', false);
+    }
+    addCylinder(root, 0.2, 0.28, 0.98, [0, 2.14, 0], bronze, 'bronze standpipe', ZERO_ROTATION, 14);
+    addCylinder(root, 0.66, 0.28, 0.28, [0, 2.68, 0], bronze, 'upper bronze bowl', ZERO_ROTATION, 20);
+    addTorus(root, 0.66, 0.05, [0, 2.8, 0], bronzeDark, 'upper bowl rim', [Math.PI / 2, 0, 0], 22, false);
+    addSphere(root, 0.14, [0, 3.0, 0], bronzeDark, 'fountain finial', [1, 1.2, 1], false, 12);
+    addCylinder(root, 0.035, 0.075, 0.95, [0, 3.55, 0], water, 'central water jet', ZERO_ROTATION, 10, false, false);
+
+    // Water leaves each bowl as a flared skirt at the rim. Sweeping a sheet all
+    // the way down to the basin instead reads as a glass drum standing around
+    // the fountain, and discrete falling columns read as legs holding the bowls
+    // up; the lip itself is where the eye looks for overflow.
+    const curtains: Mesh[] = [];
+    for (const sheet of [
+      { top: 1.24, bottom: 1.34, height: 0.46, y: 1.44, name: 'lower bowl overflow skirt' },
+      { top: 0.66, bottom: 0.74, height: 0.34, y: 2.65, name: 'upper bowl overflow skirt' },
+    ]) {
+      const geometry = new CylinderGeometry(sheet.top, sheet.bottom, sheet.height, 20, 1, true);
+      applyWorldUV(geometry, 1);
+      ensureAmbientOcclusionUV(geometry);
+      const curtain = new Mesh(geometry, water);
+      curtain.name = sheet.name;
+      curtain.position.y = sheet.y;
+      root.add(curtain);
+      curtains.push(curtain);
+    }
+    for (let jet = 0; jet < 6; jet += 1) {
+      const angle = (jet / 6) * Math.PI * 2 + 0.26;
+      const nozzle = polar(1.86, angle, 0.72);
+      addCylinder(root, 0.055, 0.075, 0.22, [nozzle.x, nozzle.y, nozzle.z], brass, 'basin jet nozzle', [0, 0, 0], 10);
+      // Spray leans inwards over the basin, the way a rim jet is aimed so the
+      // wind does not put it on the paving.
+      addBrace(root, [nozzle.x, nozzle.y + 0.08, nozzle.z], [nozzle.x * 0.74, 1.36, nozzle.z * 0.74], 0.022, water, 'arcing water jet', false);
+    }
+    addBox(root, [0.52, 0.3, 0.05], [0, 0.4, 2.2], bronzeDark, 'dedication plaque', 0.015, ZERO_ROTATION, false, true);
+    for (let bolt = 0; bolt < 6; bolt += 1) {
+      const angle = (bolt / 6) * Math.PI * 2 + 0.5;
+      const at = polar(2.02, angle, 0.7);
+      addBolt(root, [at.x, at.y, at.z], dark, ZERO_ROTATION, 0.03);
+    }
+
+    const rippleGeometry = new TorusGeometry(1, 0.035, 6, segments);
+    applyWorldUV(rippleGeometry, 1);
+    ensureAmbientOcclusionUV(rippleGeometry);
+    const ripples = [0, 1, 2].map((index) => {
+      const ring = new Mesh(rippleGeometry, water);
+      ring.name = `basin ripple ring ${index + 1}`;
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = 0.51;
+      root.add(ring);
+      return ring;
+    });
+
+    this.registerAnimation(root, ({ elapsed, delta, activity }) => {
+      for (const curtain of curtains) curtain.rotation.y += delta * 0.42;
+      for (const [index, ring] of ripples.entries()) {
+        // Each ring runs the same expansion a third of a cycle apart, so the
+        // basin always has water arriving somewhere on it.
+        const phase = ((elapsed * 0.35 + index / ripples.length) % 1);
+        const radius = 0.3 + phase * 1.6;
+        ring.scale.set(radius, 1 - phase * 0.55, radius);
+        ring.visible = activity > 0;
+      }
+    });
+    return root;
+  }
+
+  createBlossomPlanter(): Group {
+    const root = makeRoot('Blossom Planter', 'placeable');
+    const concrete = this.materials.get('concrete');
+    const timber = this.materials.get('timber');
+    const timberDark = this.materials.get('timberDark');
+    const dark = this.materials.get('steelDark');
+    const steel = this.materials.get('steel');
+    const soil = this.materials.get('soil');
+    const leaf = this.materials.get('leaf');
+    const leafLight = this.materials.get('leafLight');
+    const brass = this.materials.get('brass');
+    const blossomPink = this.materials.paint(0xe4879d, 0.62);
+    const blossomCream = this.materials.paint(0xf3dfa6, 0.62);
+
+    addBox(root, [1.74, 0.08, 1.74], [0, 0.04, 0], concrete, 'planter paving pad', 0.03, ZERO_ROTATION, false, true);
+    for (const x of [-0.7, 0.7]) {
+      for (const z of [-0.7, 0.7]) {
+        addBox(root, [0.12, 0.66, 0.12], [x, 0.37, z], dark, 'planter corner post', 0.022);
+        addBolt(root, [x, 0.24, z + Math.sign(z) * 0.06], steel, [Math.PI / 2, 0, 0], 0.024);
+      }
+    }
+    for (const [axis, offset] of [['x', -0.7], ['x', 0.7], ['z', -0.7], ['z', 0.7]] as const) {
+      for (let slat = 0; slat < 3; slat += 1) {
+        const size: XYZ = axis === 'z' ? [1.42, 0.17, 0.07] : [0.07, 0.17, 1.42];
+        const position: XYZ = axis === 'z' ? [0, 0.24 + slat * 0.2, offset] : [offset, 0.24 + slat * 0.2, 0];
+        addBox(root, size, position, slat === 1 ? timberDark : timber, 'planter side slat', 0.02);
+      }
+      const capSize: XYZ = axis === 'z' ? [1.6, 0.08, 0.16] : [0.16, 0.08, 1.6];
+      const capPosition: XYZ = axis === 'z' ? [0, 0.72, offset] : [offset, 0.72, 0];
+      addBox(root, capSize, capPosition, timberDark, 'planter rim cap', 0.02, ZERO_ROTATION, false, true);
+    }
+    addBox(root, [1.32, 0.18, 1.32], [0, 0.6, 0], soil, 'planting compost', 0.03, ZERO_ROTATION, false, true);
+
+    const clusters: ReadonlyArray<{ p: XYZ; s: number; light: boolean }> = [
+      { p: [-0.32, 0.86, -0.28], s: 0.34, light: false },
+      { p: [0.3, 0.9, -0.22], s: 0.3, light: true },
+      { p: [0.02, 0.98, 0.06], s: 0.36, light: false },
+      { p: [-0.28, 0.84, 0.34], s: 0.28, light: true },
+      { p: [0.34, 0.86, 0.32], s: 0.3, light: false },
+    ];
+    for (const [index, cluster] of clusters.entries()) {
+      const geometry = new IcosahedronGeometry(cluster.s, this.quality === 'high' ? 2 : 1);
+      applyWorldUV(geometry, 1);
+      ensureAmbientOcclusionUV(geometry);
+      const mesh = new Mesh(geometry, cluster.light ? leafLight : leaf);
+      mesh.name = `planted foliage cluster ${index + 1}`;
+      mesh.position.set(...cluster.p);
+      mesh.scale.set(1, 0.82, 1);
+      mesh.rotation.set(index * 0.31, index * 0.87, index * 0.19);
+      mesh.castShadow = index < 3;
+      mesh.receiveShadow = true;
+      root.add(mesh);
+    }
+    // Blossoms sit in the canopy, not on stalks above it: standing them proud
+    // of the foliage turned a planter into a tray of lollipops.
+    for (let flower = 0; flower < 14; flower += 1) {
+      const angle = (flower / 14) * Math.PI * 2 + 0.4;
+      const radius = 0.26 + (flower % 3) * 0.14;
+      const height = 1.03 + (flower % 4) * 0.05;
+      const at = polar(radius, angle, height);
+      addBrace(root, [at.x, at.y - 0.16, at.z], [at.x, at.y, at.z], 0.014, leaf, 'blossom stem', false);
+      addSphere(root, 0.065, [at.x, at.y, at.z], flower % 2 === 0 ? blossomPink : blossomCream, 'open blossom', [1, 0.7, 1], false, 8);
+    }
+    addBox(root, [0.2, 0.11, 0.02], [0.38, 0.5, 0.755], brass, 'nursery name tag', 0.006, ZERO_ROTATION, false, true);
     return root;
   }
 
@@ -1602,6 +2323,351 @@ export class AssetFactory {
     this.signMaterials.clear();
     this.signTextures.clear();
     if (this.ownsMaterials) this.materials.dispose();
+  }
+
+  /** A live-steam park locomotive, built around a boiler at rider scale. */
+  private buildRailwayLocomotive(): Group {
+    const engine = new Group();
+    engine.name = 'miniature railway train animation pivot';
+    const dark = this.materials.get('steelDark');
+    const green = this.materials.get('paintGreen');
+    const red = this.materials.get('paintRed');
+    const brass = this.materials.get('brass');
+    const steel = this.materials.get('steel');
+    const rubber = this.materials.get('rubber');
+    const glow = this.materials.get('lampGlow');
+    const timber = this.materials.get('timber');
+
+    addBox(engine, [1.06, 0.14, 2.42], [0, 0.24, 0], dark, 'locomotive footplate', 0.03);
+    addCylinder(engine, 0.31, 0.31, 1.44, [0, 0.66, 0.28], green, 'boiler barrel', [Math.PI / 2, 0, 0], 16);
+    addCylinder(engine, 0.34, 0.34, 0.24, [0, 0.66, 1.05], dark, 'smokebox', [Math.PI / 2, 0, 0], 16);
+    addCylinder(engine, 0.19, 0.19, 0.05, [0, 0.66, 1.19], brass, 'smokebox door ring', [Math.PI / 2, 0, 0], 14, false, true);
+    for (const band of [-0.15, 0.42]) {
+      addCylinder(engine, 0.32, 0.32, 0.055, [0, 0.66, band], brass, 'boiler band', [Math.PI / 2, 0, 0], 16, false, true);
+    }
+    addCylinder(engine, 0.1, 0.12, 0.4, [0, 1.12, 0.86], dark, 'chimney', ZERO_ROTATION, 12);
+    addCylinder(engine, 0.16, 0.13, 0.09, [0, 1.34, 0.86], brass, 'chimney cap', ZERO_ROTATION, 12, false, true);
+    addCylinder(engine, 0.15, 0.15, 0.2, [0, 1.0, 0.22], brass, 'steam dome', ZERO_ROTATION, 12);
+    addCylinder(engine, 0.045, 0.045, 0.14, [0, 1.14, 0.22], brass, 'safety valve', ZERO_ROTATION, 8, false, true);
+    addBox(engine, [0.16, 0.12, 0.1], [0, 0.98, -0.16], brass, 'whistle mount', 0.02, ZERO_ROTATION, false, true);
+
+    addBox(engine, [1.02, 0.86, 0.86], [0, 0.79, -0.78], green, 'driver cab', 0.06);
+    addBox(engine, [1.16, 0.09, 0.98], [0, 1.28, -0.8], dark, 'cab roof', 0.03);
+    for (const side of [-1, 1] as const) {
+      addBox(engine, [0.02, 0.36, 0.42], [side * 0.52, 0.92, -0.72], this.materials.get('glass'), 'cab side window', 0.006, ZERO_ROTATION, false, false);
+      addBrace(engine, [side * 0.34, 0.92, 1.16], [side * 0.34, 0.92, -0.28], 0.016, brass, 'boiler handrail', false);
+      addCylinder(engine, 0.06, 0.06, 0.08, [side * 0.34, 0.92, 0.44], brass, 'handrail knob', [Math.PI / 2, 0, 0], 8, false, false);
+    }
+    addBox(engine, [0.72, 0.1, 0.5], [0, 0.34, -1.06], timber, 'coal bunker lid', 0.02, ZERO_ROTATION, false, true);
+    addBox(engine, [1.12, 0.19, 0.11], [0, 0.31, 1.24], red, 'front buffer beam', 0.025);
+    for (const side of [-1, 1] as const) {
+      addCylinder(engine, 0.075, 0.075, 0.13, [side * 0.36, 0.31, 1.32], steel, 'buffer head', [Math.PI / 2, 0, 0], 10, false, true);
+    }
+    addBox(engine, [0.18, 0.18, 0.14], [0, 0.55, 1.28], dark, 'headlamp housing', 0.03, ZERO_ROTATION, false, true);
+    addSphere(engine, 0.06, [0, 0.55, 1.37], glow, 'headlamp lens', [1, 1, 0.55], false, 8);
+    addBrace(engine, [0, 0.24, -1.28], [0, 0.24, -1.42], 0.035, dark, 'drawbar coupling', false);
+
+    for (const side of [-1, 1] as const) {
+      for (const z of [0.72, 0.06, -0.62]) {
+        addCylinder(engine, 0.21, 0.21, 0.09, [side * 0.47, 0.21, z], rubber, 'driving wheel tyre', [Math.PI / 2, 0, 0], 14);
+        addCylinder(engine, 0.07, 0.07, 0.13, [side * 0.47, 0.21, z], brass, 'wheel bearing hub', [Math.PI / 2, 0, 0], 10, false, true);
+      }
+      addBox(engine, [0.045, 0.07, 1.44], [side * 0.55, 0.29, 0.05], steel, 'coupling rod', 0.014, ZERO_ROTATION, false, false);
+      addBox(engine, [0.2, 0.24, 0.34], [side * 0.44, 0.36, 0.98], dark, 'cylinder block', 0.04);
+    }
+    return engine;
+  }
+
+  /** An open bench carriage. Two of these are the twelve places the ride sells. */
+  private buildRailwayCarriage(index: number): Group {
+    const carriage = new Group();
+    carriage.name = `railway carriage ${index} animation pivot`;
+    const dark = this.materials.get('steelDark');
+    const timber = this.materials.get('timber');
+    const cream = this.materials.get('paintCream');
+    const brass = this.materials.get('brass');
+    const rubber = this.materials.get('rubber');
+    const paint = index === 1 ? this.materials.get('paintRed') : this.materials.get('paintTeal');
+
+    addBox(carriage, [1.04, 0.12, 1.86], [0, 0.26, 0], dark, 'carriage underframe', 0.03);
+    addBox(carriage, [1.0, 0.09, 1.74], [0, 0.35, 0], timber, 'carriage floor planking', 0.02, ZERO_ROTATION, false, true);
+    for (const side of [-1, 1] as const) {
+      for (let slat = 0; slat < 3; slat += 1) {
+        addBox(carriage, [0.07, 0.13, 1.74], [side * 0.48, 0.5 + slat * 0.17, 0], paint, 'carriage side slat', 0.02);
+      }
+      addBrace(carriage, [side * 0.48, 0.94, 0.85], [side * 0.48, 0.94, -0.85], 0.022, brass, 'carriage grab rail', false);
+      for (const z of [0.6, -0.6]) {
+        addCylinder(carriage, 0.17, 0.17, 0.08, [side * 0.5, 0.18, z], rubber, 'carriage wheel', [Math.PI / 2, 0, 0], 12);
+        addCylinder(carriage, 0.055, 0.055, 0.11, [side * 0.5, 0.18, z], brass, 'carriage axle bearing', [Math.PI / 2, 0, 0], 8, false, true);
+      }
+    }
+    for (const z of [0.88, -0.88]) {
+      addBox(carriage, [1.02, 0.62, 0.07], [0, 0.66, z], paint, 'carriage end panel', 0.025);
+    }
+    for (const z of [0.42, -0.42]) {
+      addBox(carriage, [0.88, 0.09, 0.36], [0, 0.55, z], timber, 'carriage bench seat', 0.025);
+      addBox(carriage, [0.88, 0.24, 0.07], [0, 0.68, z + Math.sign(z) * 0.18], cream, 'carriage seat back', 0.025);
+    }
+    addBrace(carriage, [0, 0.26, 1.0], [0, 0.26, 1.16], 0.03, dark, 'carriage coupling', false);
+    return carriage;
+  }
+
+  /** One four-place coaster car: moulded shell, restraints, and the wheels that hold it on. */
+  private buildCoasterCar(
+    index: number,
+    shell: Material,
+    dark: Material,
+    steel: Material,
+    restraint: Material,
+    lamp: Material,
+  ): Group {
+    const car = new Group();
+    car.name = index === 0 ? 'meteor coaster train animation pivot' : `meteor coaster car ${index + 1} pivot`;
+    const cream = this.materials.get('paintCream');
+    const rubber = this.materials.get('rubber');
+
+    addBox(car, [1.02, 0.28, 2.25], [0, 0.06, 0], dark, 'car chassis frame', 0.05);
+    addBox(car, [1.12, 0.56, 2.1], [0, 0.42, 0], shell, 'moulded car shell', 0.22);
+    if (index === 0) {
+      const noseGeometry = new ConeGeometry(0.52, 0.85, 14);
+      applyWorldUV(noseGeometry, 1);
+      ensureAmbientOcclusionUV(noseGeometry);
+      const nose = new Mesh(noseGeometry, shell);
+      nose.name = 'car nose cone';
+      nose.position.set(0, 0.42, 1.42);
+      nose.rotation.x = Math.PI / 2;
+      nose.castShadow = true;
+      nose.receiveShadow = true;
+      car.add(nose);
+      addSphere(car, 0.07, [0, 0.5, 1.78], lamp, 'train marker lamp', [1, 0.7, 0.7], false, 8);
+    }
+    addBox(car, [0.94, 0.06, 1.9], [0, 0.72, -0.05], cream, 'car body trim stripe', 0.02, ZERO_ROTATION, false, true);
+    for (const z of [0.52, -0.52]) {
+      addBox(car, [0.94, 0.16, 0.46], [0, 0.66, z], dark, 'seat pan', 0.06);
+      addBox(car, [0.94, 0.52, 0.14], [0, 0.94, z - 0.28], cream, 'seat back', 0.05);
+      for (const side of [-1, 1] as const) {
+        addBrace(car, [side * 0.24, 1.16, z - 0.2], [side * 0.24, 0.78, z + 0.16], 0.05, restraint, 'over shoulder restraint', false);
+        addBox(car, [0.1, 0.1, 0.16], [side * 0.24, 1.2, z - 0.24], dark, 'restraint pivot housing', 0.02, ZERO_ROTATION, false, false);
+      }
+    }
+    for (const side of [-1, 1] as const) {
+      for (const z of [0.78, -0.78]) {
+        addCylinder(car, 0.13, 0.13, 0.1, [side * 0.5, 0.06, z], rubber, 'road wheel', [0, 0, Math.PI / 2], 10, false, true);
+        addCylinder(car, 0.1, 0.1, 0.08, [side * 0.58, -0.16, z], rubber, 'upstop wheel', [0, 0, Math.PI / 2], 10, false, true);
+        addCylinder(car, 0.1, 0.1, 0.08, [side * 0.62, -0.05, z], rubber, 'side friction wheel', [Math.PI / 2, 0, 0], 10, false, true);
+      }
+      addBox(car, [0.07, 0.3, 1.7], [side * 0.56, -0.08, 0], steel, 'wheel carrier bogie', 0.02, ZERO_ROTATION, false, true);
+    }
+    addBrace(car, [0, 0.06, -1.2], [0, 0.06, -1.38], 0.045, steel, 'car coupling', false);
+    return car;
+  }
+
+  /**
+   * One sample of a track: where it is, and which way is forward, sideways and
+   * up for a vehicle standing on it.
+   *
+   * Three.js will hand out Frenet frames for a curve, but their normal flips
+   * through straights and inflections, which puts a coaster train briefly
+   * upside down. Deriving the frame from world up instead keeps it stable, and
+   * leaves banking as something the track author asks for rather than something
+   * the curve's second derivative decides.
+   */
+  private trackFrameAt(curve: CatmullRomCurve3, t: number, bankStrength: number): TrackFrame {
+    const at = ((t % 1) + 1) % 1;
+    const position = curve.getPointAt(at);
+    const forward = curve.getTangentAt(at).normalize();
+    const right = new Vector3().crossVectors(WORLD_UP, forward);
+    if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
+    right.normalize();
+    const up = new Vector3().crossVectors(forward, right).normalize();
+
+    if (bankStrength !== 0) {
+      // How hard the track is turning here, as the change in compass heading
+      // over a short step ahead. Rolling by that amount tips the outer rail up,
+      // which is what makes a banked curve look like it is holding the train in
+      // rather than throwing it out.
+      const ahead = curve.getTangentAt((at + 0.008) % 1).normalize();
+      const turn = Math.atan2(ahead.x, ahead.z) - Math.atan2(forward.x, forward.z);
+      const shortest = Math.atan2(Math.sin(turn), Math.cos(turn));
+      const bank = Math.max(-0.7, Math.min(0.7, shortest * bankStrength));
+      const roll = new Quaternion().setFromAxisAngle(forward, bank);
+      right.applyQuaternion(roll);
+      up.applyQuaternion(roll);
+    }
+    return { position, forward, right, up };
+  }
+
+  /** Places a vehicle on the track: standing on the rails, facing the way it runs. */
+  private setOnTrack(vehicle: Object3D, frame: TrackFrame, rideHeight: number): void {
+    vehicle.position.copy(frame.position).addScaledVector(frame.up, rideHeight);
+    vehicle.quaternion.setFromRotationMatrix(
+      new Matrix4().makeBasis(frame.right, frame.up, frame.forward),
+    );
+  }
+
+  /**
+   * Builds a run of track from a curve: two running rails swept along it, and
+   * the ties and spine that hold them apart.
+   *
+   * The rails are tubes swept down curves offset sideways from the centreline,
+   * so gauge stays constant through the banking rather than pinching in the
+   * turns. Ties are instanced — a circuit carries a few hundred of them and
+   * they are the same tie every time.
+   */
+  private addTrack(parent: Object3D, curve: CatmullRomCurve3, options: TrackOptions): TrackFrame[] {
+    const frames: TrackFrame[] = [];
+    for (let index = 0; index < options.samples; index += 1) {
+      frames.push(this.trackFrameAt(curve, index / options.samples, options.bankStrength));
+    }
+
+    for (const side of [-1, 1] as const) {
+      const rail = new CatmullRomCurve3(
+        frames.map((frame) =>
+          frame.position.clone().addScaledVector(frame.right, (side * options.gauge) / 2),
+        ),
+        true,
+        'catmullrom',
+        0.5,
+      );
+      const geometry = new TubeGeometry(rail, options.samples, options.railRadius, 6, true);
+      applyWorldUV(geometry, 1);
+      ensureAmbientOcclusionUV(geometry);
+      const mesh = new Mesh(geometry, options.railMaterial);
+      mesh.name = `${options.name} running rail`;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      parent.add(mesh);
+    }
+
+    if (options.spine) {
+      const spineCurve = new CatmullRomCurve3(
+        frames.map((frame) => frame.position.clone().addScaledVector(frame.up, options.spine!.offset)),
+        true,
+        'catmullrom',
+        0.5,
+      );
+      const geometry = new TubeGeometry(spineCurve, options.samples, options.spine.radius, 8, true);
+      applyWorldUV(geometry, 1);
+      ensureAmbientOcclusionUV(geometry);
+      const spine = new Mesh(geometry, options.spine.material);
+      spine.name = `${options.name} structural spine`;
+      spine.castShadow = true;
+      spine.receiveShadow = true;
+      parent.add(spine);
+    }
+
+    const tieCount = Math.max(8, Math.round(curve.getLength() * options.tie.perMetre));
+    const tieGeometry = new RoundedBoxGeometry(...options.tie.size, 1, 0.018);
+    applyWorldUV(tieGeometry, 1);
+    ensureAmbientOcclusionUV(tieGeometry);
+    const ties = new InstancedMesh(tieGeometry, options.tie.material, tieCount);
+    ties.name = `${options.name} instanced cross tie`;
+    ties.castShadow = true;
+    ties.receiveShadow = true;
+
+    const strutDrop = options.spine ? options.tie.offset - options.spine.offset : 0;
+    const struts = options.spine
+      ? new InstancedMesh(
+          (() => {
+            const geometry = new RoundedBoxGeometry(0.075, Math.abs(strutDrop), 0.075, 1, 0.015);
+            applyWorldUV(geometry, 1);
+            ensureAmbientOcclusionUV(geometry);
+            return geometry;
+          })(),
+          options.spine.material,
+          tieCount,
+        )
+      : null;
+    if (struts) {
+      struts.name = `${options.name} instanced spine strut`;
+      struts.castShadow = true;
+      struts.receiveShadow = true;
+    }
+
+    const scale = new Vector3(1, 1, 1);
+    for (let index = 0; index < tieCount; index += 1) {
+      const frame = this.trackFrameAt(curve, index / tieCount, options.bankStrength);
+      const rotation = new Quaternion().setFromRotationMatrix(
+        new Matrix4().makeBasis(frame.right, frame.up, frame.forward),
+      );
+      setInstance(
+        ties,
+        index,
+        frame.position.clone().addScaledVector(frame.up, options.tie.offset),
+        rotation,
+        scale,
+      );
+      if (struts) {
+        setInstance(
+          struts,
+          index,
+          frame.position.clone().addScaledVector(frame.up, options.tie.offset - strutDrop / 2),
+          rotation,
+          scale,
+        );
+      }
+    }
+    ties.instanceMatrix.needsUpdate = true;
+    parent.add(ties);
+    if (struts) {
+      struts.instanceMatrix.needsUpdate = true;
+      parent.add(struts);
+    }
+    return frames;
+  }
+
+  /**
+   * Stands the track up on columns, skipping any that would come down through
+   * a lower pass of the same circuit. The alternative is authoring every
+   * support by hand and re-authoring them whenever the layout moves.
+   */
+  private addTrackSupports(
+    parent: Object3D,
+    frames: readonly TrackFrame[],
+    column: Material,
+    brace: Material,
+    footing: Material,
+    everyNth: number,
+  ): void {
+    for (let index = 0; index < frames.length; index += everyNth) {
+      const frame = frames[index];
+      if (!frame || frame.position.y < 2.2) continue;
+      const { x, y, z } = frame.position;
+      const blocked = frames.some((other) => {
+        if (other === frame) return false;
+        if (other.position.y > y - 1.1 || other.position.y < 0.4) return false;
+        return Math.hypot(other.position.x - x, other.position.z - z) < 1.35;
+      });
+      if (blocked) continue;
+
+      const top = y - 0.42;
+      addBox(parent, [0.26, top, 0.26], [x, top / 2, z], column, 'track support column', 0.04);
+      addBox(parent, [0.68, 0.16, 0.68], [x, 0.1, z], footing, 'support column footing', 0.03, ZERO_ROTATION, false, true);
+      // Feet spread along the ground, not along the banked frame: on a rolled
+      // section the track's own right vector points partly into the earth.
+      const spread = new Vector3(frame.right.x, 0, frame.right.z);
+      if (spread.lengthSq() < 1e-6) spread.set(1, 0, 0);
+      spread.normalize();
+      for (const side of [-1, 1] as const) {
+        const foot = new Vector3(x, 0.22, z).addScaledVector(spread, side * 1.05);
+        addBrace(parent, [x, top * 0.62, z], [foot.x, foot.y, foot.z], 0.045, brace, 'support diagonal brace', false);
+      }
+      for (const bolt of [-0.19, 0.19]) addBolt(parent, [x + bolt, 0.2, z + 0.2], brace, ZERO_ROTATION, 0.03);
+    }
+  }
+
+  /** A section of a closed circuit, as its own open curve. Used for lift chains and brake runs. */
+  private trackSection(
+    curve: CatmullRomCurve3,
+    from: number,
+    to: number,
+    samples: number,
+  ): Vector3[] {
+    const points: Vector3[] = [];
+    for (let index = 0; index <= samples; index += 1) {
+      points.push(curve.getPointAt(((from + ((to - from) * index) / samples) % 1 + 1) % 1));
+    }
+    return points;
   }
 
   private addBoundaryFence(root: Group, width: number, depth: number, material: Material): void {
