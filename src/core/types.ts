@@ -6,37 +6,57 @@ export type PlaceableKind =
   | 'burger-kiosk'
   | 'lemonade-stand'
   | 'ice-cream-cart'
+  | 'pizza-kitchen'
   | 'carousel'
   | 'sky-wheel'
   | 'bumper-cars'
   | 'drop-tower'
   | 'pirate-ship'
+  | 'mini-railway'
+  | 'meteor-coaster'
   | 'restroom'
   | 'first-aid'
   | 'information-booth'
+  | 'cash-machine'
   | 'trash-bin'
   | 'bench'
   | 'park-lamp'
-  | 'shade-tree';
+  | 'shade-tree'
+  | 'tiered-fountain'
+  | 'blossom-planter';
 
 export type PlaceableIcon =
   | 'burger'
   | 'cup'
   | 'ice-cream'
+  | 'pizza'
   | 'carousel'
   | 'wheel'
   | 'bumper-car'
   | 'drop-tower'
   | 'pirate-ship'
+  | 'train'
+  | 'coaster'
   | 'restroom'
   | 'first-aid'
   | 'information'
+  | 'cash-machine'
   | 'bin'
   | 'bench'
   | 'lamp'
-  | 'tree';
+  | 'tree'
+  | 'fountain'
+  | 'planter';
 
-export type ServiceNeed = 'hunger' | 'fun' | 'bladder' | 'rest' | 'trash' | 'information' | null;
+export type ServiceNeed =
+  | 'hunger'
+  | 'fun'
+  | 'bladder'
+  | 'rest'
+  | 'trash'
+  | 'information'
+  | 'cash'
+  | null;
 
 export interface Vec2 {
   x: number;
@@ -58,6 +78,15 @@ export interface PlaceableSpec {
   serviceSeconds: number;
   revenue: number;
   appeal: number;
+  /**
+   * Metres over which this item's appeal reaches, for things whose appeal is
+   * about where they are rather than what they are. A lamp only flatters the
+   * stall it stands beside; a ride is a reason to visit the park from anywhere
+   * in it. Omitting the field means the old behaviour — the full appeal counts
+   * wherever the thing stands — so specs written before radii existed, and the
+   * saved parks built from them, need no migration.
+   */
+  radius?: number;
 }
 
 export interface FacilitySnapshot {

@@ -618,9 +618,14 @@ export class GameUI {
         // every time a guest uses it. Both belong on the card, because the
         // second is the only reason to pay the first.
         const charge = priceFor(spec.kind, this.prices);
-        const earns = charge > 0
-          ? `<small class="catalog-earns">Earns ${money(charge)} per guest</small>`
-          : '<small class="catalog-earns is-free">Free for guests</small>';
+        // Decoration is the one thing here whose worth depends on where it is
+        // put, so its card says how far it reaches instead of leaving the
+        // player to work out why their trees stopped counting.
+        const earns = typeof spec.radius === 'number'
+          ? `<small class="catalog-earns is-free">Adds ${spec.appeal} appeal within ${spec.radius} m</small>`
+          : charge > 0
+            ? `<small class="catalog-earns">Earns ${money(charge)} per guest</small>`
+            : '<small class="catalog-earns is-free">Free for guests</small>';
         return `
         <button class="catalog-card" data-kind="${spec.kind}">
           <span class="catalog-icon">${icon(spec.icon as Parameters<typeof icon>[0])}</span>
