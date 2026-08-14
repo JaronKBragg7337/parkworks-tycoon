@@ -34,7 +34,11 @@ under `heartbeat-observatory/games/parkworks-tycoon/` without changing source.
 - Food packaging becomes carried waste. Guests find a nearby bin or drop litter;
   the player cleans litter by walking close to it. Cleanliness changes live.
 - Park cash, construction expense, upkeep, revenue, reputation, attendance,
-  day clock, and opening objectives.
+  day clock, and opening objectives. Attendance is limited by what the park can
+  attract rather than by a fixed ceiling, and reputation tracks how guests
+  actually leave, so neither stat stops moving as the park grows.
+- One-metre nudge buttons beside Rotate, because a fingertip covers several
+  metres of ground and the last metre of alignment has to be precise.
 - Parks save themselves and resume where you left off. The store is chosen by
   the page: a host site can supply its own (a Heartbeat account, say), and the
   standalone build falls back to this browser. Saves are self-contained

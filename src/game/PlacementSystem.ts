@@ -190,6 +190,25 @@ export class PlacementSystem {
     return true;
   }
 
+  /**
+   * Shifts the preview one metre along a world axis and pins it there. This is
+   * the precise counterpart to dragging: a fingertip covers several metres of
+   * ground, so the last metre of alignment has to be nudgeable.
+   */
+  nudge(deltaX: number, deltaZ: number, placed: readonly PlacedObject[]): boolean {
+    if (!this.active) return false;
+    // Whole-metre steps preserve the half-cell offset that even-sized
+    // footprints snap to, so nudging never knocks a building off the grid.
+    this.pointerWorld = {
+      x: this.pointerWorld.x + Math.round(deltaX),
+      z: this.pointerWorld.z + Math.round(deltaZ),
+    };
+    this.previewRoot.position.set(this.pointerWorld.x, 0.04, this.pointerWorld.z);
+    this.positionPinned = true;
+    this.updateValidity(placed);
+    return true;
+  }
+
   pinPosition(placed: readonly PlacedObject[]): boolean {
     if (!this.active) return false;
     this.positionPinned = true;

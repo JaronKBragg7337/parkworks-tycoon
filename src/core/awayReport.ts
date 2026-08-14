@@ -37,8 +37,8 @@ export type ServicedNeed = keyof typeof NEED_GROWTH_PER_SECOND;
 
 export const SERVICED_NEEDS: readonly ServicedNeed[] = ['hunger', 'fun', 'bladder', 'rest'];
 
-/** ParkSimulation.processSpawning. */
-const MAX_GUESTS = 42;
+/** ParkSimulation.processSpawning — an economic ceiling, not a render one. */
+const MAX_GUESTS = 600;
 const BASE_GUESTS = 5;
 const APPEAL_PER_GUEST = 3;
 
@@ -56,10 +56,15 @@ export const REAL_SECONDS_PER_PARK_DAY = SIM_MINUTES_PER_DAY / SIM_MINUTES_PER_S
 /** ParkSimulation.recalculateCleanliness. */
 const CLEANLINESS_LOST_PER_LITTER = 0.045;
 
-/** ParkSimulation.completeService and removeGuest. */
-const REPUTATION_PER_SERVICE = 0.08;
-const REPUTATION_PER_HAPPY_DEPARTURE = 0.2;
-const REPUTATION_PER_UNHAPPY_DEPARTURE = -0.7;
+/** ParkSimulation.removeGuest: weight of one departure in the running average. */
+const REPUTATION_SMOOTHING = 0.012;
+
+/**
+ * Live guests spawn at 0.72-0.92 happiness and gain it slowly, so even a
+ * flawless park sends people home a little short of perfect. Without this the
+ * projection would hand out a perfect score no live park could earn.
+ */
+const MAX_EXPECTED_HAPPINESS = 0.96;
 
 /**
  * Offline time is credited up to this much. Beyond it the park is described as
@@ -181,11 +186,17 @@ export function computeAwayProgress(
   const departures = (population * creditedSeconds) / GUEST_LIFETIME_SECONDS;
   // A guest leaves happy when the park could actually serve them and was clean.
   const satisfaction = demandTotal > 0 ? clamp01(metTotal / demandTotal) : 1;
-  const happyFraction = clamp01(satisfaction * 0.65 + cleanliness * 0.35);
-  const reputationDelta =
-    servicesTotal * REPUTATION_PER_SERVICE +
-    departures * happyFraction * REPUTATION_PER_HAPPY_DEPARTURE +
-    departures * (1 - happyFraction) * REPUTATION_PER_UNHAPPY_DEPARTURE;
+  const expectedHappiness = Math.min(
+    MAX_EXPECTED_HAPPINESS,
+    clamp01(satisfaction * 0.65 + cleanliness * 0.35),
+  );
+
+  // Live reputation is an exponential average over departing guests. Applying
+  // that same step `departures` times has a closed form, so an absence lands on
+  // exactly the reputation the park would have earned had it been watched.
+  const target = expectedHappiness * 100;
+  const retained = Math.pow(1 - REPUTATION_SMOOTHING, departures);
+  const reputationAfter = target + (stats.reputation - target) * retained;
 
   const roundedRevenue = Math.max(0, Math.round(revenue));
   const roundedUpkeep = Math.max(0, Math.round(upkeep));
@@ -202,6 +213,6 @@ export function computeAwayProgress(
     litterCreated,
     daysPassed: Math.floor(creditedSeconds / REAL_SECONDS_PER_PARK_DAY),
     cleanliness,
-    reputation: Math.max(0, Math.min(100, stats.reputation + reputationDelta)),
+    reputation: Math.max(0, Math.min(100, reputationAfter)),
   };
 }

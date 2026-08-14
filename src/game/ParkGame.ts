@@ -146,6 +146,7 @@ export class ParkGame {
   private readonly selectionPad: Mesh;
   private readonly selectionArrow: Mesh;
   private tapCandidate: { x: number; y: number; time: number } | null = null;
+  private readonly guestRenderBudget: number;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -172,6 +173,9 @@ export class ParkGame {
       window.matchMedia('(pointer: coarse)').matches ||
       ((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8) <= 4;
     this.assets = new AssetFactory({ materials: this.materials, quality: mobileQuality ? 'mobile' : 'high' });
+    // The phone budget from docs/DESIGN.md, now a drawing limit rather than a
+    // limit on how many guests the park may have.
+    this.guestRenderBudget = mobileQuality ? 42 : 90;
     this.infrastructureView = new ParkInfrastructureView(this.materials);
     this.player = this.assets.createPlayer();
     this.root.dataset.playerX = this.playerPosition.x.toFixed(3);
@@ -208,6 +212,7 @@ export class ParkGame {
       onSelectInfrastructure: (tool) => this.beginInfrastructure(tool),
       onBuyParcel: (parcelId) => this.buyParcel(parcelId),
       onRotate: () => this.rotatePlacement(),
+      onNudge: (screenX, screenZ) => this.nudgePlacement(screenX, screenZ),
       onConfirm: () => this.confirmBuild(),
       onCancel: () => this.cancelBuild(),
       onMoveSelected: () => this.moveSelected(),
@@ -770,6 +775,38 @@ export class ParkGame {
     this.applySimulationState();
     this.placement.begin(kind);
     this.placement.updatePointer(window.innerWidth / 2, window.innerHeight / 2, this.camera, this.placedObjects);
+    this.exposePlacementPointerState();
+  }
+
+  /**
+   * Steps the preview one metre in a screen direction. The buttons read as
+   * up/down/left/right on the pad, so they are mapped through the camera's
+   * heading to the nearest world axis — pressing "up" always moves the building
+   * away from you, whichever way the free camera happens to be facing.
+   */
+  private nudgePlacement(screenX: number, screenZ: number): void {
+    if (this.mode !== 'placing') return;
+    const forward = new Vector3();
+    this.camera.getWorldDirection(forward);
+    forward.y = 0;
+    if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
+    forward.normalize();
+    const right = new Vector3(-forward.z, 0, forward.x);
+
+    const axis = (vector: Vector3): { x: number; z: number } =>
+      Math.abs(vector.x) >= Math.abs(vector.z)
+        ? { x: Math.sign(vector.x), z: 0 }
+        : { x: 0, z: Math.sign(vector.z) };
+
+    // Screen "up" is away from the camera, which is +forward.
+    const forwardAxis = axis(forward);
+    const rightAxis = axis(right);
+    const deltaX = forwardAxis.x * -screenZ + rightAxis.x * screenX;
+    const deltaZ = forwardAxis.z * -screenZ + rightAxis.z * screenX;
+    if (deltaX === 0 && deltaZ === 0) return;
+
+    this.placement.nudge(deltaX, deltaZ, this.placedObjects);
+    this.placementPointer = reducePlacementPointer(this.placementPointer, { type: 'confirm' }).state;
     this.exposePlacementPointerState();
   }
 
@@ -1404,7 +1441,26 @@ export class ParkGame {
     this.root.dataset.placementZ = this.placement.position.z.toFixed(3);
   }
 
-  private syncGuestVisuals(guests: readonly GuestSnapshot[], delta: number): void {
+  /**
+   * Draws the nearest guests only. The simulation is allowed to grow far past
+   * what a phone can render, so attendance stops being limited by the mesh
+   * budget: the crowd near the camera is real, and the rest of the park's
+   * visitors keep queueing, spending, and littering off screen.
+   */
+  private visibleGuests(guests: readonly GuestSnapshot[]): readonly GuestSnapshot[] {
+    if (guests.length <= this.guestRenderBudget) return guests;
+    const focus = this.cameraTarget;
+    return [...guests]
+      .sort((a, b) => {
+        const aDistance = (a.position.x - focus.x) ** 2 + (a.position.z - focus.z) ** 2;
+        const bDistance = (b.position.x - focus.x) ** 2 + (b.position.z - focus.z) ** 2;
+        return aDistance - bDistance;
+      })
+      .slice(0, this.guestRenderBudget);
+  }
+
+  private syncGuestVisuals(allGuests: readonly GuestSnapshot[], delta: number): void {
+    const guests = this.visibleGuests(allGuests);
     const activeIds = new Set(guests.map((guest) => guest.id));
     for (const [id, visual] of this.guestVisuals) {
       if (activeIds.has(id)) continue;

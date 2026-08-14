@@ -38,6 +38,20 @@ export interface GuestNavigationNetwork {
   destinations: readonly Vec2[];
 }
 
+/**
+ * Weight each departing guest carries in the park's running reputation. Low
+ * enough that one bad afternoon does not erase a good park, high enough that a
+ * park left broken visibly slides.
+ */
+const REPUTATION_SMOOTHING = 0.012;
+
+/**
+ * Guests the park can hold. This is an economic ceiling, not a rendering one:
+ * ParkGame draws only the nearest handful, so a park can keep growing long
+ * after the screen stops showing every visitor.
+ */
+const MAX_ATTENDANCE = 600;
+
 const GATE_POSITION: Vec2 = { x: 0, z: 32 };
 const ENTRY_POSITION: Vec2 = { x: 0, z: 22 };
 const EPSILON = 0.0001;
@@ -399,7 +413,7 @@ export class ParkSimulation {
       (total, facility) => total + (facility.enabled ? getPlaceableSpec(facility.kind).appeal : 0),
       0,
     );
-    const capacity = Math.min(42, 5 + Math.floor(attractionAppeal / 3));
+    const capacity = Math.min(MAX_ATTENDANCE, 5 + Math.floor(attractionAppeal / 3));
     if (this.spawnTimer > 0 || this.guests.size >= capacity) return;
 
     this.spawnGuest();
@@ -646,7 +660,6 @@ export class ParkSimulation {
       cash: this.stats.cash + spec.revenue,
       revenue: this.stats.revenue + spec.revenue,
       guestsServed: this.stats.guestsServed + 1,
-      reputation: Math.min(100, this.stats.reputation + 0.08),
     };
     this.emit({
       type: 'service-complete',
@@ -859,13 +872,22 @@ export class ParkSimulation {
     this.guests.delete(guest.id);
     this.removeGuestFromFacilities(guest.id);
     const happy = guest.happiness >= 0.55;
-    const delta = happy ? 0.2 : -0.7;
-    this.stats = {
-      ...this.stats,
-      reputation: Math.max(0, Math.min(100, this.stats.reputation + delta)),
-    };
+
+    // Reputation tracks how guests actually leave rather than counting visits.
+    // The old rule added a fixed amount per departure, which pinned any busy
+    // park at 100 within minutes and then stopped meaning anything. As an
+    // average it keeps responding for as long as the park runs: it drifts
+    // toward the happiness guests leave with, so a park that grows past what
+    // it can serve is felt immediately.
+    const previous = this.stats.reputation;
+    const target = guest.happiness * 100;
+    const reputation = Math.max(
+      0,
+      Math.min(100, previous + (target - previous) * REPUTATION_SMOOTHING),
+    );
+    this.stats = { ...this.stats, reputation };
     this.emit({ type: 'guest-left', guestId: guest.id, happy });
-    this.emit({ type: 'reputation-changed', delta });
+    this.emit({ type: 'reputation-changed', delta: reputation - previous });
   }
 
   private removeGuestFromFacilities(guestId: string): void {

@@ -63,15 +63,34 @@ Offline progress is a closed form derived from the live constants in
 serve at their real throughput, and upkeep still lands. It is an upper bound for
 a well-connected park, and credited time is capped at eight hours.
 
-## Known balance gaps
+## No ceiling
 
-- Reputation saturates. At full attendance the live rules grant enough per
-  service and per happy departure to move a park from 38 to 100 in about nine
-  minutes, after which the stat stops meaning anything.
-- Attendance caps at 42 guests, reached at 111 appeal, which is roughly three
-  large rides. Rides beyond that add upkeep and no attendance.
-- A park day is about 3.4 real minutes, so short absences advance the calendar
-  by dozens of days.
+The slice originally stopped growing about twenty minutes in. Two limits did
+that, and both are gone:
+
+- **Reputation used to saturate.** It accumulated a fixed amount per service and
+  per happy departure, which moved any busy park from 38 to 100 in about nine
+  minutes and then meant nothing. It is now an exponential average over the
+  happiness guests leave with, so it keeps responding forever: a park that grows
+  past what it can serve is felt straight away, and a park held at 90 is a park
+  genuinely being run well.
+- **Attendance used to cap at 42**, reached at 111 appeal — roughly three large
+  rides. That number was a phone rendering budget, not a design decision, so it
+  now governs drawing only. The simulation admits up to 600 guests and
+  `ParkGame.visibleGuests` draws the nearest 42 on touch devices or 90 on
+  desktop. Guests off screen still queue, spend, and litter.
+
+Remaining: a park day is about 3.4 real minutes, so short absences advance the
+calendar by dozens of days. That wants addressing when days carry an end-of-day
+report.
+
+## Beyond one park
+
+The intended long arc is that a park which outgrows its land promotes the player
+to running several. Saves are already self-contained portable documents for this
+reason: a chain is a list of them plus a holding-company layer of decisions the
+individual parks feed into. Nothing in the current save format has to change to
+get there.
 
 ## Next milestones
 
@@ -79,6 +98,6 @@ a well-connected park, and credited time is capped at eight hours.
 - Finite bin fill level plus manual emptying.
 - Staff hiring: janitor and mechanic.
 - Day/night lighting driven by the existing clock, and an end-of-day report.
-- Rebalance reputation and the attendance ceiling.
+- Multi-park ownership: a chain layer over several saved parks.
 - Audio, haptics, richer guest feedback, and accessibility settings.
 - Exact Heartbeat Observatory integration and public-device performance pass.

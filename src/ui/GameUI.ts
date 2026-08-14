@@ -28,6 +28,8 @@ export interface GameUICallbacks {
   onSelectInfrastructure: (tool: InfrastructureTool) => void;
   onBuyParcel: (parcelId: string) => void;
   onRotate: () => void;
+  /** Screen-relative nudge: (0,-1) is away from the camera, (1,0) is right. */
+  onNudge: (screenX: number, screenZ: number) => void;
   onConfirm: () => void;
   onCancel: () => void;
   onMoveSelected: () => void;
@@ -96,6 +98,7 @@ export class GameUI {
   private inspectorBar!: HTMLElement;
   private inspectorStatus!: HTMLElement;
   private sellButton!: HTMLButtonElement;
+  private nudgePad!: HTMLElement;
   private selectedCategory: CatalogSection = 'infrastructure';
   private infrastructureTool: InfrastructureTool = 'sidewalk';
   private parcels: readonly ParcelSnapshot[] = [];
@@ -120,6 +123,7 @@ export class GameUI {
     this.placementBar.classList.toggle('is-surface', mode === 'surface');
     this.inspectorBar.classList.toggle('is-open', mode === 'inspect');
     this.rotateButton.hidden = mode === 'surface';
+    this.nudgePad.hidden = mode !== 'placing';
     this.buildToggle.classList.toggle('is-active', mode !== 'explore');
     this.buildToggle.innerHTML = mode === 'explore'
       ? `${icon('build')}<span>Build</span>`
@@ -402,6 +406,13 @@ export class GameUI {
 
         <section class="placement-bar glass-panel" id="placement-bar" aria-label="Placement controls">
           <div class="placement-copy" id="placement-status"></div>
+          <div class="nudge-pad" id="nudge-pad" role="group" aria-label="Nudge one metre">
+            <button class="nudge-button nudge-up" id="nudge-up" type="button" aria-label="Nudge away from camera">${icon('nudge')}</button>
+            <button class="nudge-button nudge-left" id="nudge-left" type="button" aria-label="Nudge left">${icon('nudge')}</button>
+            <span class="nudge-hub" aria-hidden="true">1m</span>
+            <button class="nudge-button nudge-right" id="nudge-right" type="button" aria-label="Nudge right">${icon('nudge')}</button>
+            <button class="nudge-button nudge-down" id="nudge-down" type="button" aria-label="Nudge toward camera">${icon('nudge')}</button>
+          </div>
           <div class="placement-actions">
             <button class="secondary-action" id="rotate-placement">${icon('rotate')}<span>Rotate</span></button>
             <button class="secondary-action" id="cancel-placement">${icon('close')}<span>Cancel</span></button>
@@ -472,6 +483,7 @@ export class GameUI {
     this.inspectorBar = this.requireElement('#inspector-bar');
     this.inspectorStatus = this.requireElement('#inspector-status');
     this.sellButton = this.requireElement<HTMLButtonElement>('#inspector-sell');
+    this.nudgePad = this.requireElement('#nudge-pad');
   }
 
   private bindEvents(): void {
@@ -480,6 +492,10 @@ export class GameUI {
       this.callbacks.onStart();
     });
     this.requireElement('#away-dismiss').addEventListener('click', () => this.hideAwayReport());
+    this.requireElement('#nudge-up').addEventListener('click', () => this.callbacks.onNudge(0, -1));
+    this.requireElement('#nudge-down').addEventListener('click', () => this.callbacks.onNudge(0, 1));
+    this.requireElement('#nudge-left').addEventListener('click', () => this.callbacks.onNudge(-1, 0));
+    this.requireElement('#nudge-right').addEventListener('click', () => this.callbacks.onNudge(1, 0));
     this.requireElement('#inspector-move').addEventListener('click', this.callbacks.onMoveSelected);
     this.requireElement('#inspector-rotate').addEventListener('click', this.callbacks.onRotateSelected);
     this.sellButton.addEventListener('click', this.callbacks.onSellSelected);

@@ -423,6 +423,21 @@ kbd { padding: 2px 5px; color: var(--ink); border: 1px solid var(--line); border
 .splash p { max-width: 485px; margin: 24px 0 28px; color: #c0d0cc; font-size: clamp(14px, 1.4vw, 18px); line-height: 1.6; }
 .start-button { min-height: 58px; padding: 0 22px; border: 0; border-radius: 16px; display: inline-flex; align-items: center; gap: 14px; color: #051b19; background: linear-gradient(145deg, #8af0c4, #4fc59e); box-shadow: 0 14px 35px rgb(20 110 87 / 24%); cursor: pointer; font: 800 14px 'Segoe UI Variable Display', 'Segoe UI', sans-serif; }
 .splash-footnote { display: block; margin-top: 16px; color: #809893; font-size: 10px; }
+.nudge-pad { display: grid; grid-template-columns: repeat(3, 34px); grid-template-rows: repeat(3, 34px); gap: 3px; place-items: center; }
+.nudge-pad[hidden] { display: none; }
+.nudge-button { width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 10px; display: grid; place-items: center; color: var(--ink); background: rgb(255 255 255 / 5%); cursor: pointer; }
+.nudge-button:hover { border-color: rgb(187 222 210 / 38%); background: rgb(255 255 255 / 11%); }
+.nudge-button:active { background: var(--mint); color: #051b19; }
+.nudge-button .icon { width: 17px; height: 17px; }
+.nudge-up { grid-area: 1 / 2; }
+.nudge-left { grid-area: 2 / 1; }
+.nudge-hub { grid-area: 2 / 2; color: var(--muted); font-size: 9px; letter-spacing: .04em; }
+.nudge-right { grid-area: 2 / 3; }
+.nudge-down { grid-area: 3 / 2; }
+.nudge-left .icon { transform: rotate(-90deg); }
+.nudge-right .icon { transform: rotate(90deg); }
+.nudge-down .icon { transform: rotate(180deg); }
+
 .inspector-sell { color: var(--coral); border-color: rgb(255 120 104 / 34%); }
 .inspector-sell:hover { background: rgb(255 120 104 / 12%); }
 
@@ -485,6 +500,8 @@ kbd { padding: 2px 5px; color: var(--ink); border: 1px solid var(--line); border
   .parcel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .placement-bar { align-items: stretch; flex-direction: column; gap: 8px; padding: 11px; }
   .placement-copy { padding: 0 3px; }
+  .nudge-pad { align-self: center; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(3, 40px); }
+  .nudge-button { width: 44px; height: 40px; }
   .placement-actions { width: 100%; }
   .secondary-action, .primary-action { flex: 1; justify-content: center; padding: 0 9px; }
   .splash { align-items: flex-end; padding: 26px var(--safe-right) calc(var(--safe-bottom) + 24px) var(--safe-left); background: linear-gradient(0deg, rgb(3 15 17 / 95%) 0%, rgb(3 15 17 / 60%) 55%, rgb(3 15 17 / 15%) 100%); }

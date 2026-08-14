@@ -62,21 +62,36 @@ describe('away report', () => {
     starved.needs.hunger = { throughput: 0.001, revenuePerService: 30 };
     const generous = workingPark();
 
-    // A short window: reputation gain is fast enough in the live rules that an
-    // hour saturates both parks at 100 and hides the difference.
-    const starvedReport = computeAwayProgress(statsWith(), starved, 120, 0)!;
-    const generousReport = computeAwayProgress(statsWith(), generous, 120, 0)!;
+    const starvedReport = computeAwayProgress(statsWith(), starved, 3_600, 0)!;
+    const generousReport = computeAwayProgress(statsWith(), generous, 3_600, 0)!;
     expect(starvedReport.revenue).toBeLessThan(generousReport.revenue);
     expect(starvedReport.reputation).toBeLessThan(generousReport.reputation);
   });
 
-  it('mirrors the live rules closely enough that reputation saturates', () => {
-    // Documents current balance rather than endorsing it: ParkSimulation grants
-    // +0.08 reputation per service and +0.2 per happy departure, which a full
-    // park earns fast enough to reach 100 in roughly nine minutes. If the live
-    // rates are ever rebalanced, this expectation should move with them.
-    const report = computeAwayProgress(statsWith(), workingPark(), 3_600, 0)!;
-    expect(report.reputation).toBe(100);
+  it('settles reputation on park quality instead of climbing forever', () => {
+    // Reputation is an average over departing guests, so a long absence
+    // converges on what the park deserves rather than pinning at 100.
+    const good = computeAwayProgress(statsWith({ reputation: 10 }), workingPark(), 7_200, 0)!;
+    const longer = computeAwayProgress(statsWith({ reputation: 10 }), workingPark(), 8 * 3_600, 0)!;
+    expect(good.reputation).toBeGreaterThan(10);
+    // A flawless park scores high but never a perfect 100, because live guests
+    // do not leave perfectly happy.
+    expect(longer.reputation).toBeLessThan(100);
+    expect(longer.reputation).toBeGreaterThan(90);
+    // Converged: quadrupling the absence barely moves it once it has settled.
+    expect(Math.abs(longer.reputation - good.reputation)).toBeLessThan(12);
+  });
+
+  it('pulls a good park down when it can no longer serve its crowd', () => {
+    const overwhelmed = workingPark();
+    overwhelmed.appeal = 600;
+    overwhelmed.needs.hunger = { throughput: 0.05, revenuePerService: 30 };
+    overwhelmed.needs.fun = { throughput: 0.05, revenuePerService: 28 };
+    overwhelmed.needs.bladder = { throughput: 0.05, revenuePerService: 0 };
+    overwhelmed.needs.rest = { throughput: 0.05, revenuePerService: 0 };
+
+    const report = computeAwayProgress(statsWith({ reputation: 90 }), overwhelmed, 7_200, 0)!;
+    expect(report.reputation).toBeLessThan(90);
   });
 
   it('turns unbinned food waste into litter and dirties the park', () => {
