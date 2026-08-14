@@ -44,6 +44,7 @@ import { cameraRelativeMovement } from '../controls/movementMath';
 import { AssetFactory } from '../world/AssetFactory';
 import { MaterialLibrary } from '../world/Materials';
 import { GameUI } from '../ui/GameUI';
+import { sampleSkyCycle } from '../world/skyCycle';
 import { OVERVIEW_CAMERA_FAR, overviewCameraPose } from './cameraMath';
 import {
   createFreeCameraState,
@@ -120,6 +121,10 @@ export class ParkGame {
   private readonly groundPlane = new Plane(new Vector3(0, 1, 0), 0);
   private readonly groundHit = new Vector3();
   private readonly unregisterSimulation: () => void;
+  private sun!: DirectionalLight;
+  private ambient!: AmbientLight;
+  private readonly skyColor = new Color();
+  private lastSkyMinute = Number.NaN;
   private animationFrame = 0;
   private cameraYaw = 0;
   private cameraPitch = 0.44;
@@ -328,8 +333,10 @@ export class ParkGame {
     this.world.add(this.selectionMarker);
 
     const ambient = new AmbientLight(0xaaccc5, 1.18);
+    this.ambient = ambient;
     this.scene.add(ambient);
     const sun = new DirectionalLight(0xffe7bd, 3.25);
+    this.sun = sun;
     sun.position.set(-24, 36, 18);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
@@ -343,6 +350,7 @@ export class ParkGame {
     sun.shadow.normalBias = 0.03;
     this.scene.add(sun);
 
+    this.applySkyCycle(this.simulation.getStats().minuteOfDay, true);
     this.camera.position.set(7, 5.4, 35);
     this.cameraTarget.copy(this.playerPosition).add(new Vector3(0, 1.25, 0));
     this.cameraTargetDesired.copy(this.cameraTarget);
@@ -1307,6 +1315,8 @@ export class ParkGame {
       this.lastStatsUiUpdate = elapsed;
     }
 
+    this.applySkyCycle(this.simulation.getStats().minuteOfDay);
+
     if (this.simulation.isRunning()) {
       this.autosaveCountdown -= delta;
       if (this.autosaveCountdown <= 0) this.requestSave();
@@ -1504,6 +1514,33 @@ export class ParkGame {
       this.dynamicLayer.add(object);
       this.litterVisuals.set(item.id, object);
     }
+  }
+
+  /**
+   * Drives the sun, sky, fog, and every lit fixture from the park clock.
+   *
+   * The clock has always run 9:00 to 21:00; until this existed, nothing looked
+   * at it. Throttled to meaningful changes because a park minute is about a
+   * sixth of a second of real time, so re-deriving it every frame is wasted
+   * work for a difference nobody can see.
+   */
+  private applySkyCycle(minuteOfDay: number, force = false): void {
+    if (!force && Math.abs(minuteOfDay - this.lastSkyMinute) < 0.25) return;
+    this.lastSkyMinute = minuteOfDay;
+
+    const sky = sampleSkyCycle(minuteOfDay);
+    this.sun.position.set(...sky.sunPosition);
+    this.sun.color.setHex(sky.sunColor);
+    this.sun.intensity = sky.sunIntensity;
+    this.ambient.color.setHex(sky.ambientColor);
+    this.ambient.intensity = sky.ambientIntensity;
+
+    this.skyColor.setHex(sky.skyColor);
+    if (this.scene.background instanceof Color) this.scene.background.copy(this.skyColor);
+    // Fog density stays with the camera code, which lerps it per view mode;
+    // only the colour belongs to the time of day.
+    this.fog.color.setHex(sky.fogColor);
+    this.materials.setLampGlow(sky.lampGlow);
   }
 
   private animateWorld(elapsed: number, delta: number): void {

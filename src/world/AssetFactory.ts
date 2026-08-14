@@ -1347,6 +1347,20 @@ export class AssetFactory {
       const angle = (index / 6) * Math.PI * 2;
       addBolt(root, [Math.sin(angle) * 0.2, 0.18, Math.cos(angle) * 0.2], steel, ZERO_ROTATION, 0.025);
     }
+    // The pool of light the luminaire casts. An additive ground decal costs one
+    // draw call instead of a real light, which is what keeps a park full of
+    // lamps inside the phone budget after dark.
+    const pool = new Mesh(new PlaneGeometry(6.4, 6.4), this.materials.getLightPoolMaterial());
+    pool.name = 'lamp light pool';
+    // Flagged so scale checks measure assembled construction, not light spill.
+    pool.userData.decal = true;
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(0, 0.02, 0.75);
+    pool.renderOrder = 2;
+    pool.matrixAutoUpdate = false;
+    pool.updateMatrix();
+    root.add(pool);
+
     root.userData.lightAnchor = [0, 3.48, 0.75];
     root.userData.lightColor = 0xffc45b;
     root.userData.lightIntensity = 1.35;

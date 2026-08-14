@@ -17,20 +17,26 @@ afterAll(() => {
 
 function inspectAsset(kind: (typeof PLACEABLE_SPECS)[number]['kind']) {
   const object = factory.createPlaceable(kind);
-  const bounds = new Box3().setFromObject(object);
-  const size = bounds.getSize(new Vector3());
+  object.updateMatrixWorld(true);
+  // Bounds measure assembled construction only. Meshes flagged as decals are
+  // lighting effects such as the pool a lamp casts on the ground: they are
+  // meant to spill past the footprint, and including them would turn this
+  // real-world-scale guard into noise.
+  const bounds = new Box3();
   let meshes = 0;
   let triangles = 0;
   const names: string[] = [];
   object.traverse((child) => {
     names.push(child.name.toLowerCase());
     if (!(child instanceof Mesh)) return;
+    if (child.userData.decal !== true) bounds.expandByObject(child);
     meshes += 1;
     const geometry = child.geometry as BufferGeometry;
     triangles += geometry.index
       ? geometry.index.count / 3
       : (geometry.getAttribute('position')?.count ?? 0) / 3;
   });
+  const size = bounds.getSize(new Vector3());
   return { object, bounds, size, meshes, triangles, names };
 }
 

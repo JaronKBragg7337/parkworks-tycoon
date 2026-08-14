@@ -1,8 +1,11 @@
 import {
+  AdditiveBlending,
+  ClampToEdgeWrapping,
   Color,
   DataTexture,
   LinearFilter,
   LinearMipmapLinearFilter,
+  MeshBasicMaterial,
   MeshPhysicalMaterial,
   MeshStandardMaterial,
   RepeatWrapping,
@@ -180,6 +183,34 @@ function createColorNoiseTexture(
   return makeDataTexture(data, size, true);
 }
 
+/**
+ * Soft radial falloff used for the pool of light a lamp throws on the ground.
+ * Additive blending means the alpha channel is irrelevant, so the gradient is
+ * carried in the colour channels and fades to black at the rim to avoid a
+ * visible disc edge.
+ */
+function createLightPoolTexture(size: number): DataTexture {
+  const data = new Uint8Array(size * size * 4);
+  const center = (size - 1) / 2;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const distance = Math.hypot(x - center, y - center) / center;
+      // Squared falloff reads closer to a real luminaire than a linear ramp.
+      const falloff = clamp(1 - distance);
+      const intensity = Math.round(falloff * falloff * 255);
+      const index = (y * size + x) * 4;
+      data[index] = intensity;
+      data[index + 1] = Math.round(intensity * 0.82);
+      data[index + 2] = Math.round(intensity * 0.52);
+      data[index + 3] = 255;
+    }
+  }
+  const texture = makeDataTexture(data, size, true);
+  texture.wrapS = ClampToEdgeWrapping;
+  texture.wrapT = ClampToEdgeWrapping;
+  return texture;
+}
+
 function createScalarNoiseTexture(
   center: number,
   variation: number,
@@ -213,6 +244,8 @@ function createScalarNoiseTexture(
  */
 export class MaterialLibrary {
   private readonly materialMap = new Map<MaterialKey, MeshStandardMaterial>();
+  /** Shared additive decal for the pool of light a lamp throws on the ground. */
+  private lightPoolMaterial!: MeshBasicMaterial;
   private readonly ownedTextures = new Set<Texture>();
   private readonly generatedGround = new Map<GroundMaterialKey, GroundFallback>();
   private readonly tintCache = new Map<string, MeshStandardMaterial>();
@@ -428,6 +461,17 @@ export class MaterialLibrary {
     });
     this.materialMap.set('lampGlow', glow);
 
+    const lightPool = new MeshBasicMaterial({
+      name: 'parkworks/light-pool',
+      map: createLightPoolTexture(64),
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: AdditiveBlending,
+      toneMapped: true,
+    });
+    this.lightPoolMaterial = lightPool;
+
     for (const key of ['grass', 'soil', 'path'] as const) {
       const material = this.get(key);
       this.generatedGround.set(key, {
@@ -574,8 +618,30 @@ export class MaterialLibrary {
     );
   }
 
+  /** The shared ground-light decal material, for meshes placed under fixtures. */
+  getLightPoolMaterial(): MeshBasicMaterial {
+    return this.lightPoolMaterial;
+  }
+
+  /**
+   * Brings every lit fixture in the park up or down together.
+   *
+   * One glow material is shared by all eleven asset builders, so a single write
+   * here lights the lamps, the ride marquees, and the service-counter signage at
+   * the same moment — which is what makes dusk read as the park switching on
+   * rather than a handful of props changing.
+   */
+  setLampGlow(level: number): void {
+    const glowLevel = clamp(level);
+    const glow = this.materialMap.get('lampGlow');
+    if (glow) glow.emissiveIntensity = 0.34 + glowLevel * 3.1;
+    this.lightPoolMaterial.opacity = glowLevel * 0.85;
+  }
+
   /** Dispose factory-owned materials and generated maps; external maps remain caller-owned. */
   dispose(): void {
+    this.lightPoolMaterial.map?.dispose();
+    this.lightPoolMaterial.dispose();
     for (const material of this.materialMap.values()) material.dispose();
     for (const material of this.tintCache.values()) material.dispose();
     for (const texture of this.ownedTextures) texture.dispose();
