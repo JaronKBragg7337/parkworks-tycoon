@@ -128,6 +128,13 @@ export interface ParkGridCellSnapshot extends GridCell {
   parcelId: string | null;
 }
 
+/** Persistence view of everything the player changed about the land itself. */
+export interface ParkGridSaveState {
+  ownedParcelIds: readonly string[];
+  /** Row-major surface codes as [code, count, code, count, ...]. */
+  surfaceRuns: readonly number[];
+}
+
 export interface ParkGridSnapshot {
   revision: number;
   cellSizeMeters: typeof PARK_GRID_CELL_SIZE_METERS;
@@ -486,6 +493,82 @@ export class ParkGrid {
       cells: this.getCells(),
       parcels: this.getParcelSnapshots(),
     };
+  }
+
+  /**
+   * Compact persistence view: owned parcels plus run-length encoded surfaces in
+   * row-major cell order. Parcel definitions, bounds, and costs are rebuilt from
+   * code, so a save never pins the map layout to whatever shipped that day.
+   */
+  getSaveState(): ParkGridSaveState {
+    const surfaceRuns: number[] = [];
+    let runCode = this.surfaces[0] ?? 0;
+    let runLength = 0;
+    for (let index = 0; index < this.surfaces.length; index += 1) {
+      const code = this.surfaces[index] ?? 0;
+      if (code === runCode) {
+        runLength += 1;
+        continue;
+      }
+      surfaceRuns.push(runCode, runLength);
+      runCode = code;
+      runLength = 1;
+    }
+    if (runLength > 0) surfaceRuns.push(runCode, runLength);
+
+    return {
+      ownedParcelIds: [...this.parcels.values()]
+        .filter((parcel) => parcel.owned)
+        .map((parcel) => parcel.definition.id),
+      surfaceRuns,
+    };
+  }
+
+  /**
+   * Restores a save produced by getSaveState. Returns false and leaves the grid
+   * untouched when the state does not fit this map, so a stale or corrupt save
+   * degrades to a new park instead of a broken one.
+   */
+  loadSaveState(state: ParkGridSaveState): boolean {
+    if (!state || !Array.isArray(state.ownedParcelIds) || !Array.isArray(state.surfaceRuns)) {
+      return false;
+    }
+    if (state.surfaceRuns.length % 2 !== 0) return false;
+    for (const parcelId of state.ownedParcelIds) {
+      if (!this.parcels.has(parcelId)) return false;
+    }
+
+    const decoded = new Uint8Array(this.surfaces.length);
+    let cursor = 0;
+    for (let index = 0; index < state.surfaceRuns.length; index += 2) {
+      const code = state.surfaceRuns[index] ?? -1;
+      const length = state.surfaceRuns[index + 1] ?? -1;
+      if (!Number.isInteger(code) || code < 0 || code >= CODE_TO_SURFACE.length) return false;
+      if (!Number.isInteger(length) || length < 0) return false;
+      if (cursor + length > decoded.length) return false;
+      decoded.fill(code, cursor, cursor + length);
+      cursor += length;
+    }
+    if (cursor !== decoded.length) return false;
+
+    const owned = new Set(state.ownedParcelIds);
+    for (const parcel of this.parcels.values()) {
+      if (parcel.definition.initiallyOwned) owned.add(parcel.definition.id);
+    }
+    // Surfaces may only exist on owned land; reject rather than silently repair,
+    // because a mismatch means the save and the map disagree about the world.
+    for (let index = 0; index < decoded.length; index += 1) {
+      if (decoded[index] === SURFACE_TO_CODE.lawn) continue;
+      const parcelId = this.parcelIdByCell[index];
+      if (!parcelId || !owned.has(parcelId)) return false;
+    }
+
+    for (const parcel of this.parcels.values()) {
+      parcel.owned = owned.has(parcel.definition.id);
+    }
+    this.surfaces.set(decoded);
+    this.revision += 1;
+    return true;
   }
 
   getParcelSnapshots(): readonly ParcelSnapshot[] {

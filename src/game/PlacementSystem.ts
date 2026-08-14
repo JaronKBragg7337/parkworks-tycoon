@@ -1,7 +1,10 @@
 import {
   Box3,
   BoxGeometry,
+  BufferAttribute,
+  BufferGeometry,
   Color,
+  DoubleSide,
   Group,
   Mesh,
   MeshBasicMaterial,
@@ -36,6 +39,34 @@ export interface PlacementCallbacks {
 const LOT_LIMIT = 33;
 const GATE_CLEARANCE = new Box3(new Vector3(-4.5, 0, 24), new Vector3(4.5, 6, 32));
 
+/**
+ * A flat ground arrow pointing along local +Z, which is the side guests walk up
+ * to: ParkSimulation.approachPoint offsets a facility by (sin, cos) of its
+ * rotation, so +Z at rotation 0 is the front. Drawn outside the footprint so a
+ * thumb resting on the building never hides which way it faces.
+ */
+export function createFacingArrowGeometry(): BufferGeometry {
+  const geometry = new BufferGeometry();
+  // Wound counter-clockwise seen from above so the lit face points at the sky,
+  // not into the ground.
+  const vertices = new Float32Array([
+    // Arrowhead
+    0, 0, 1.05,
+    0.62, 0, 0.24,
+    -0.62, 0, 0.24,
+    // Shaft, two triangles
+    -0.24, 0, 0.28,
+    0.24, 0, -0.46,
+    -0.24, 0, -0.46,
+    -0.24, 0, 0.28,
+    0.24, 0, 0.28,
+    0.24, 0, -0.46,
+  ]);
+  geometry.setAttribute('position', new BufferAttribute(vertices, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 export class PlacementSystem {
   private readonly world: Object3D;
   private readonly assetFactory: AssetFactory;
@@ -52,6 +83,17 @@ export class PlacementSystem {
     depthWrite: false,
   });
   private readonly footprintMesh = new Mesh(new BoxGeometry(1, 0.06, 1), this.footprintMaterial);
+  private readonly facingMaterial = new MeshBasicMaterial({
+    color: 0x51d9a3,
+    transparent: true,
+    opacity: 0.92,
+    depthWrite: false,
+    depthTest: false,
+    side: DoubleSide,
+    // Distance haze must not mute the one marker that has to stay readable.
+    fog: false,
+  });
+  private readonly facingArrow = new Mesh(createFacingArrowGeometry(), this.facingMaterial);
   private activeKind: PlaceableKind | null = null;
   private activeSpec: PlaceableSpec | null = null;
   private previewModel: Object3D | null = null;
@@ -67,6 +109,8 @@ export class PlacementSystem {
     this.callbacks = callbacks;
     this.previewRoot.visible = false;
     this.previewRoot.add(this.footprintMesh);
+    this.facingArrow.renderOrder = 6;
+    this.previewRoot.add(this.facingArrow);
     this.world.add(this.previewRoot);
   }
 
@@ -82,19 +126,49 @@ export class PlacementSystem {
     return this.positionPinned;
   }
 
-  begin(kind: PlaceableKind): void {
+  /** The id the next confirmed placement will receive. */
+  get nextFacilityId(): string {
+    return `facility-${this.placedCounter}`;
+  }
+
+  /**
+   * Moves the id counter past every id already in the park. Restoring a save
+   * rebuilds buildings with their original ids, and the simulation keys
+   * facilities by id, so a fresh build must never reuse one.
+   */
+  reserveIds(existingIds: Iterable<string>): void {
+    for (const id of existingIds) {
+      const match = /^facility-(\d+)$/.exec(id);
+      if (!match) continue;
+      const value = Number.parseInt(match[1] ?? '', 10);
+      if (Number.isFinite(value)) this.placedCounter = Math.max(this.placedCounter, value + 1);
+    }
+  }
+
+  /**
+   * Starts a placement. A rotation may be supplied when picking an existing
+   * building back up, so moving something never silently re-orients it.
+   */
+  begin(kind: PlaceableKind, rotation = 0): void {
     this.cancel(false);
     const spec = getPlaceableSpec(kind);
     this.activeKind = kind;
     this.activeSpec = spec;
     this.positionPinned = false;
-    this.rotation = 0;
+    this.rotation = ((rotation % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    this.previewRoot.rotation.y = this.rotation;
     const previewModel = this.assetFactory.createPlaceable(kind);
     this.previewModel = previewModel;
     this.setPreviewTransparency(previewModel, 0.62);
     this.previewRoot.add(previewModel);
     this.previewRoot.visible = true;
     this.footprintMesh.scale.set(spec.footprint[0], 1, spec.footprint[1]);
+    // The arrow lives just beyond the front edge, in the preview root's local
+    // space, so rotating the preview carries it around with the building. It
+    // scales with the footprint so a 9 m ride does not get a 1 m marker.
+    const arrowScale = Math.min(2.4, Math.max(1, Math.min(spec.footprint[0], spec.footprint[1]) * 0.34));
+    this.facingArrow.scale.setScalar(arrowScale);
+    this.facingArrow.position.set(0, 0.09, spec.footprint[1] / 2 + 0.55 + arrowScale * 0.6);
     this.updateValidity([]);
   }
 
@@ -184,6 +258,8 @@ export class PlacementSystem {
     this.world.remove(this.previewRoot);
     this.footprintMesh.geometry.dispose();
     this.footprintMaterial.dispose();
+    this.facingArrow.geometry.dispose();
+    this.facingMaterial.dispose();
   }
 
   private updateValidity(placed: readonly PlacedObject[]): void {
@@ -228,6 +304,7 @@ export class PlacementSystem {
         };
     const color = !this.valid ? 0xff6b5d : connected ? 0x51d9a3 : 0xf0b55a;
     this.footprintMaterial.color.setHex(color);
+    this.facingMaterial.color.setHex(color);
     this.setPreviewColor(this.previewModel, new Color(color));
     this.callbacks.onPreviewChanged({
       ...validation,

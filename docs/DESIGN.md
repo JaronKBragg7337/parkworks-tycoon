@@ -47,12 +47,38 @@ The baseline targets a phone-class 30 FPS experience:
 Future production optimization should pack roughness/AO/metalness into shared
 ORM textures and convert to KTX2/Basis after visual values are locked.
 
+## Persistence
+
+A save is a self-contained document: owned parcels, run-length encoded path
+surfaces, every placed building, the books, and any litter left behind. Guests
+are not saved; they are transient, and a park between sessions has none.
+
+The game never imports a database client. It asks the page for a store through
+`resolveSaveBackend`, so Heartbeat Observatory's shell can hand it a
+cloud-backed one tied to the player's Heartbeat identity while the standalone
+build quietly falls back to this browser. One codebase, both homes.
+
+Offline progress is a closed form derived from the live constants in
+`ParkSimulation`, not invented rates: needs grow at the same speed, facilities
+serve at their real throughput, and upkeep still lands. It is an upper bound for
+a well-connected park, and credited time is capped at eight hours.
+
+## Known balance gaps
+
+- Reputation saturates. At full attendance the live rules grant enough per
+  service and per happy departure to move a park from 38 to 100 in about nine
+  minutes, after which the stat stops meaning anything.
+- Attendance caps at 42 guests, reached at 111 appeal, which is roughly three
+  large rides. Rides beyond that add upkeep and no attendance.
+- A park day is about 3.4 real minutes, so short absences advance the calendar
+  by dozens of days.
+
 ## Next milestones
 
-- Path construction and explicit connectivity validation.
-- Facility inspector, configurable prices, operating status, and demolition.
+- Facility pricing and guest wallets.
 - Finite bin fill level plus manual emptying.
 - Staff hiring: janitor and mechanic.
-- Save schema, local persistence, and resumable objectives.
+- Day/night lighting driven by the existing clock, and an end-of-day report.
+- Rebalance reputation and the attendance ceiling.
 - Audio, haptics, richer guest feedback, and accessibility settings.
 - Exact Heartbeat Observatory integration and public-device performance pass.

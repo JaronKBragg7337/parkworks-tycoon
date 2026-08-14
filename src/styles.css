@@ -423,6 +423,23 @@ kbd { padding: 2px 5px; color: var(--ink); border: 1px solid var(--line); border
 .splash p { max-width: 485px; margin: 24px 0 28px; color: #c0d0cc; font-size: clamp(14px, 1.4vw, 18px); line-height: 1.6; }
 .start-button { min-height: 58px; padding: 0 22px; border: 0; border-radius: 16px; display: inline-flex; align-items: center; gap: 14px; color: #051b19; background: linear-gradient(145deg, #8af0c4, #4fc59e); box-shadow: 0 14px 35px rgb(20 110 87 / 24%); cursor: pointer; font: 800 14px 'Segoe UI Variable Display', 'Segoe UI', sans-serif; }
 .splash-footnote { display: block; margin-top: 16px; color: #809893; font-size: 10px; }
+.inspector-sell { color: var(--coral); border-color: rgb(255 120 104 / 34%); }
+.inspector-sell:hover { background: rgb(255 120 104 / 12%); }
+
+.splash-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.ghost-action { min-height: 44px; padding: 0 18px; border: 1px solid var(--line); border-radius: 14px; color: var(--muted); background: rgb(255 255 255 / 4%); cursor: pointer; font: 700 12px 'Segoe UI Variable Display', 'Segoe UI', sans-serif; }
+.ghost-action:hover { color: var(--ink); border-color: rgb(187 222 210 / 34%); }
+
+.away-report { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left); background: rgb(3 12 14 / 72%); backdrop-filter: blur(6px); }
+.away-report[hidden] { display: none; }
+.away-card { width: min(420px, 92vw); padding: 22px; border-radius: 20px; display: grid; gap: 14px; }
+.away-card h2 { margin: 0; font: 800 22px 'Segoe UI Variable Display', 'Segoe UI', sans-serif; letter-spacing: -.02em; }
+.away-grid { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.away-grid > div { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: rgb(255 255 255 / 3%); }
+.away-grid dt { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
+.away-grid dd { margin: 4px 0 0; font: 800 16px 'Segoe UI Variable Display', 'Segoe UI', sans-serif; }
+.away-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.away-card .primary-action { justify-content: center; }
 
 @media (pointer: coarse) {
   .desktop-hint { display: none; }

@@ -1,3 +1,4 @@
+import type { AwayReport } from '../core/awayReport';
 import { CATEGORY_LABELS, PLACEABLE_SPECS } from '../core/catalog';
 import type { ParkStats, PlaceableCategory, PlaceableKind, SimulationEvent } from '../core/types';
 import {
@@ -9,8 +10,19 @@ import type { InfrastructureTool } from '../game/InfrastructureBuilder';
 import type { PlacementValidation } from '../game/PlacementSystem';
 import { icon } from './icons';
 
+export interface ResumeSummary {
+  parkName: string;
+  day: number;
+  cash: number;
+  buildings: number;
+  /** Where the park is stored, e.g. "this device". */
+  storageLabel: string;
+}
+
 export interface GameUICallbacks {
   onStart: () => void;
+  onContinue: () => void;
+  onNewPark: () => void;
   onToggleBuild: () => void;
   onSelectPlaceable: (kind: PlaceableKind) => void;
   onSelectInfrastructure: (tool: InfrastructureTool) => void;
@@ -18,16 +30,39 @@ export interface GameUICallbacks {
   onRotate: () => void;
   onConfirm: () => void;
   onCancel: () => void;
+  onMoveSelected: () => void;
+  onRotateSelected: () => void;
+  onSellSelected: () => void;
+  onCloseInspector: () => void;
   onPause: () => void;
   onToggleCamera: () => void;
   onReframeCamera: () => void;
 }
 
-type GameUIMode = 'explore' | 'build' | 'placing' | 'surface';
+type GameUIMode = 'explore' | 'build' | 'placing' | 'surface' | 'inspect';
+
+/** What the inspector shows about one already-placed building. */
+export interface InspectorInfo {
+  name: string;
+  detail: string;
+  tone: 'positive' | 'warning';
+  resale: number;
+}
 type CatalogSection = 'infrastructure' | PlaceableCategory;
 
 function money(value: number): string {
   return `$${Math.round(value).toLocaleString('en-US')}`;
+}
+
+function describeDuration(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.round((total % 3600) / 60);
+  if (hours >= 1) {
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+  if (minutes >= 1) return `${minutes}m`;
+  return 'a moment';
 }
 
 function timeLabel(minuteOfDay: number): string {
@@ -58,6 +93,9 @@ export class GameUI {
   private cameraButton!: HTMLButtonElement;
   private reframeButton!: HTMLButtonElement;
   private toastElement!: HTMLElement;
+  private inspectorBar!: HTMLElement;
+  private inspectorStatus!: HTMLElement;
+  private sellButton!: HTMLButtonElement;
   private selectedCategory: CatalogSection = 'infrastructure';
   private infrastructureTool: InfrastructureTool = 'sidewalk';
   private parcels: readonly ParcelSnapshot[] = [];
@@ -80,6 +118,7 @@ export class GameUI {
     this.buildPanel.classList.toggle('is-open', mode === 'build');
     this.placementBar.classList.toggle('is-open', mode === 'placing' || mode === 'surface');
     this.placementBar.classList.toggle('is-surface', mode === 'surface');
+    this.inspectorBar.classList.toggle('is-open', mode === 'inspect');
     this.rotateButton.hidden = mode === 'surface';
     this.buildToggle.classList.toggle('is-active', mode !== 'explore');
     this.buildToggle.innerHTML = mode === 'explore'
@@ -155,6 +194,12 @@ export class GameUI {
     this.confirmButton.innerHTML = `${icon('check')}<span>${action}</span>`;
   }
 
+  setInspector(info: InspectorInfo): void {
+    this.inspectorStatus.innerHTML =
+      `<strong>${info.name}</strong><span class="placement-validity ${info.tone === 'positive' ? 'is-valid' : 'is-warning'}">${info.detail}</span>`;
+    this.sellButton.innerHTML = `${icon('close')}<span>Sell ${money(info.resale)}</span>`;
+  }
+
   updateStats(stats: Readonly<ParkStats>): void {
     this.cashElement.textContent = money(stats.cash);
     this.reputationElement.textContent = `${Math.round(stats.reputation)}`;
@@ -193,6 +238,101 @@ export class GameUI {
       default:
         break;
     }
+  }
+
+  /**
+   * Offers to resume a saved park. Continue is the primary action, because a
+   * player who saved a park almost always came back for that park.
+   */
+  showResumeOption(summary: ResumeSummary): void {
+    const actions = this.requireElement('#splash-actions');
+    actions.innerHTML = `
+      <button class="start-button" id="continue-button">
+        <span>Continue ${summary.parkName}</span>${icon('spark')}
+      </button>
+      <button class="ghost-action" id="new-park-button" type="button">Start a new park</button>
+    `;
+    this.requireElement('#splash-footnote').textContent =
+      `Day ${summary.day} · ${money(summary.cash)} · ${summary.buildings} built · saved on ${summary.storageLabel}`;
+
+    this.requireElement('#continue-button').addEventListener('click', () => {
+      this.hideSplash();
+      this.callbacks.onContinue();
+    });
+    this.requireElement('#new-park-button').addEventListener('click', () => {
+      this.callbacks.onNewPark();
+    });
+  }
+
+  /** Restores the first-run splash after the player discards a saved park. */
+  showFreshStart(): void {
+    const actions = this.requireElement('#splash-actions');
+    actions.innerHTML = `
+      <button class="start-button" id="start-button"><span>Open the gates</span>${icon('spark')}</button>
+    `;
+    this.requireElement('#splash-footnote').textContent = 'No account · Touch-ready · CC0 materials';
+    this.requireElement('#start-button').addEventListener('click', () => {
+      this.hideSplash();
+      this.callbacks.onStart();
+    });
+  }
+
+  hideSplash(): void {
+    this.requireElement('#splash').classList.add('is-hidden');
+  }
+
+  showAwayReport(report: AwayReport, reputationBefore: number): void {
+    const panel = this.requireElement('#away-report');
+    const grid = this.requireElement('#away-grid');
+    const heading = this.requireElement('#away-heading');
+    const note = this.requireElement('#away-note');
+
+    heading.textContent = report.netCash >= 0
+      ? 'Your park kept running'
+      : 'Your park ran at a loss';
+
+    const rows: Array<[string, string]> = [
+      ['Away for', describeDuration(report.awaySeconds)],
+      ['Guests', `${report.guestsVisited.toLocaleString('en-US')}`],
+      ['Served', `${report.guestsServed.toLocaleString('en-US')}`],
+      ['Revenue', money(report.revenue)],
+      ['Upkeep', `-${money(report.upkeep)}`],
+      ['Net', `${report.netCash < 0 ? '-' : '+'}${money(Math.abs(report.netCash))}`],
+    ];
+    if (report.litterCreated > 0) rows.push(['Litter dropped', `${report.litterCreated}`]);
+    rows.push(['Cleanliness', `${Math.round(report.cleanliness * 100)}%`]);
+
+    // Reputation can move a long way over a long absence. Showing only the new
+    // number would look like a bug, so the swing is always spelled out.
+    const reputationAfter = Math.round(report.reputation);
+    const reputationDelta = reputationAfter - Math.round(reputationBefore);
+    rows.push([
+      'Reputation',
+      reputationDelta === 0
+        ? `${reputationAfter}`
+        : `${reputationAfter} (${reputationDelta > 0 ? '+' : ''}${reputationDelta})`,
+    ]);
+
+    grid.innerHTML = rows
+      .map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`)
+      .join('');
+
+    const notes = ['Estimated from your park’s own service rates.'];
+    if (report.guestsVisited > 0 && report.guestsServed === 0) {
+      notes.push('Nothing was open to serve them, so they left unhappy.');
+    }
+    if (report.capped) {
+      notes.push(`Only the first ${describeDuration(report.creditedSeconds)} counted.`);
+    }
+    if (report.litterCreated > 0) {
+      notes.push('Nobody was there to clean up.');
+    }
+    note.textContent = notes.join(' ');
+    panel.hidden = false;
+  }
+
+  hideAwayReport(): void {
+    this.requireElement('#away-report').hidden = true;
   }
 
   toast(message: string, tone: 'neutral' | 'positive' | 'warning' = 'neutral'): void {
@@ -269,6 +409,16 @@ export class GameUI {
           </div>
         </section>
 
+        <section class="placement-bar inspector-bar glass-panel" id="inspector-bar" aria-label="Edit a building">
+          <div class="placement-copy" id="inspector-status"></div>
+          <div class="placement-actions">
+            <button class="secondary-action" id="inspector-move">${icon('build')}<span>Move</span></button>
+            <button class="secondary-action" id="inspector-rotate">${icon('rotate')}<span>Rotate</span></button>
+            <button class="secondary-action inspector-sell" id="inspector-sell">${icon('close')}<span>Sell</span></button>
+            <button class="primary-action" id="inspector-done">${icon('check')}<span>Done</span></button>
+          </div>
+        </section>
+
         <div class="joystick" id="movement-joystick" aria-hidden="true">
           <div class="joystick-ring"></div><div class="joystick-knob"></div>
         </div>
@@ -282,8 +432,20 @@ export class GameUI {
           <span class="splash-kicker">A tiny park with a big heartbeat</span>
           <h1>Build joy.<br><em>Mind the mess.</em></h1>
           <p>Shape a welcoming park on foot. Build rides, feed your guests, keep facilities flowing, and clean up what they leave behind.</p>
-          <button class="start-button" id="start-button"><span>Open the gates</span>${icon('spark')}</button>
-          <span class="splash-footnote">No account · Touch-ready · CC0 materials</span>
+          <div class="splash-actions" id="splash-actions">
+            <button class="start-button" id="start-button"><span>Open the gates</span>${icon('spark')}</button>
+          </div>
+          <span class="splash-footnote" id="splash-footnote">No account · Touch-ready · CC0 materials</span>
+        </div>
+      </section>
+
+      <section class="away-report" id="away-report" data-ui hidden aria-live="polite">
+        <div class="away-card glass-panel">
+          <span class="eyebrow">While you were away</span>
+          <h2 id="away-heading">Your park kept running</h2>
+          <dl class="away-grid" id="away-grid"></dl>
+          <p class="away-note" id="away-note"></p>
+          <button class="primary-action" id="away-dismiss"><span>Back to the park</span></button>
         </div>
       </section>
     `);
@@ -307,13 +469,21 @@ export class GameUI {
     this.reframeButton = this.requireElement<HTMLButtonElement>('#reframe-camera');
     this.pauseButton = this.requireElement<HTMLButtonElement>('#pause-button');
     this.toastElement = this.requireElement('#toast');
+    this.inspectorBar = this.requireElement('#inspector-bar');
+    this.inspectorStatus = this.requireElement('#inspector-status');
+    this.sellButton = this.requireElement<HTMLButtonElement>('#inspector-sell');
   }
 
   private bindEvents(): void {
     this.requireElement('#start-button').addEventListener('click', () => {
-      this.requireElement('#splash').classList.add('is-hidden');
+      this.hideSplash();
       this.callbacks.onStart();
     });
+    this.requireElement('#away-dismiss').addEventListener('click', () => this.hideAwayReport());
+    this.requireElement('#inspector-move').addEventListener('click', this.callbacks.onMoveSelected);
+    this.requireElement('#inspector-rotate').addEventListener('click', this.callbacks.onRotateSelected);
+    this.sellButton.addEventListener('click', this.callbacks.onSellSelected);
+    this.requireElement('#inspector-done').addEventListener('click', this.callbacks.onCloseInspector);
     this.buildToggle.addEventListener('click', this.callbacks.onToggleBuild);
     this.requireElement('#close-build').addEventListener('click', this.callbacks.onToggleBuild);
     this.cameraButton.addEventListener('click', this.callbacks.onToggleCamera);

@@ -35,6 +35,16 @@ under `heartbeat-observatory/games/parkworks-tycoon/` without changing source.
   the player cleans litter by walking close to it. Cleanliness changes live.
 - Park cash, construction expense, upkeep, revenue, reputation, attendance,
   day clock, and opening objectives.
+- Parks save themselves and resume where you left off. The store is chosen by
+  the page: a host site can supply its own (a Heartbeat account, say), and the
+  standalone build falls back to this browser. Saves are self-contained
+  documents, so a park is portable rather than tied to one device.
+- An away report on return, projected from the park's own service rates: guests,
+  revenue, upkeep, litter dropped with nobody there to clean it, and the
+  reputation swing. Offline time is credited up to eight hours.
+- Already-placed buildings can be selected, turned, moved, or sold back at 70%.
+  A ground arrow marks the side guests approach from, both while placing and
+  while editing, so a thumb over the model never hides which way it faces.
 
 ## Art and fidelity
 

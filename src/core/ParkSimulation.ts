@@ -44,6 +44,39 @@ const EPSILON = 0.0001;
 
 export type SimulationListener = (event: SimulationEvent) => void;
 
+/**
+ * Persistence view of the simulation. Guests are deliberately excluded: they are
+ * transient visitors, and respawning them on load is both cheaper and truer to
+ * what a park is between sessions. Litter is kept, because a park the player
+ * left dirty should still be dirty when they come back.
+ */
+export interface ParkSimulationSaveState {
+  stats: ParkStats;
+  litter: readonly LitterSnapshot[];
+  nextGuestId: number;
+  nextLitterId: number;
+}
+
+/**
+ * The part of an offline projection the simulation writes back. Declared here
+ * structurally so the live rules never depend on the projection module.
+ */
+export interface AwayProgress {
+  netCash: number;
+  revenue: number;
+  upkeep: number;
+  guestsVisited: number;
+  guestsServed: number;
+  reputation: number;
+  cleanliness: number;
+  daysPassed: number;
+  litterCreated: number;
+}
+
+function finiteOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
@@ -166,6 +199,88 @@ export class ParkSimulation {
         guest.route.slice(guest.routeIndex).map((point) => ({ ...point })),
       ]),
     );
+  }
+
+  getSaveState(): ParkSimulationSaveState {
+    return {
+      stats: { ...this.stats },
+      litter: this.getLitter().map((item) => ({ ...item, position: { ...item.position } })),
+      nextGuestId: this.nextGuestId,
+      nextLitterId: this.nextLitterId,
+    };
+  }
+
+  /**
+   * Restores saved stats and litter. Unknown or non-finite values fall back to
+   * the fresh-park defaults rather than poisoning the economy with NaN.
+   */
+  loadSaveState(state: ParkSimulationSaveState): void {
+    const defaults = this.stats;
+    const saved = state.stats ?? ({} as ParkStats);
+    this.stats = {
+      cash: Math.round(finiteOr(saved.cash, defaults.cash)),
+      reputation: Math.max(0, Math.min(100, finiteOr(saved.reputation, defaults.reputation))),
+      cleanliness: clamp01(finiteOr(saved.cleanliness, defaults.cleanliness)),
+      guestCount: 0,
+      guestsServed: Math.max(0, Math.round(finiteOr(saved.guestsServed, 0))),
+      guestsVisited: Math.max(0, Math.round(finiteOr(saved.guestsVisited, 0))),
+      litterCleaned: Math.max(0, Math.round(finiteOr(saved.litterCleaned, 0))),
+      revenue: Math.max(0, Math.round(finiteOr(saved.revenue, 0))),
+      expenses: Math.max(0, Math.round(finiteOr(saved.expenses, 0))),
+      day: Math.max(1, Math.round(finiteOr(saved.day, 1))),
+      minuteOfDay: Math.max(9 * 60, Math.min(21 * 60, finiteOr(saved.minuteOfDay, 9 * 60))),
+    };
+
+    this.guests.clear();
+    this.litter.clear();
+    for (const item of state.litter ?? []) {
+      if (!item || typeof item.id !== 'string') continue;
+      const x = finiteOr(item.position?.x, Number.NaN);
+      const z = finiteOr(item.position?.z, Number.NaN);
+      if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+      this.litter.set(item.id, {
+        id: item.id,
+        position: { x, z },
+        variant: Math.max(0, Math.min(3, Math.round(finiteOr(item.variant, 0)))),
+        age: Math.max(0, finiteOr(item.age, 0)),
+      });
+    }
+
+    this.nextGuestId = Math.max(1, Math.round(finiteOr(state.nextGuestId, 1)));
+    this.nextLitterId = Math.max(1, Math.round(finiteOr(state.nextLitterId, 1)));
+    this.spawnTimer = 1.25;
+    this.upkeepTimer = 45;
+  }
+
+  /**
+   * Writes an offline projection into the books. Litter produced while away is
+   * scattered near the park's food traffic so the mess the report describes is
+   * the mess the player walks back into, not just a lower number.
+   */
+  applyAwayProgress(report: AwayProgress): void {
+    this.stats = {
+      ...this.stats,
+      cash: this.stats.cash + report.netCash,
+      revenue: this.stats.revenue + report.revenue,
+      expenses: this.stats.expenses + report.upkeep,
+      guestsVisited: this.stats.guestsVisited + report.guestsVisited,
+      guestsServed: this.stats.guestsServed + report.guestsServed,
+      reputation: Math.max(0, Math.min(100, report.reputation)),
+      cleanliness: clamp01(report.cleanliness),
+      day: this.stats.day + report.daysPassed,
+    };
+
+    const spots = [...this.facilities.values()].filter(
+      (facility) => facility.enabled && getPlaceableSpec(facility.kind).category === 'food',
+    );
+    for (let index = 0; index < report.litterCreated; index += 1) {
+      const spot = spots[this.random.integer(0, spots.length - 1)];
+      const origin = spot ? this.approachPoint(spot) : { ...ENTRY_POSITION };
+      this.createLitter({
+        x: origin.x + this.random.range(-4.5, 4.5),
+        z: origin.z + this.random.range(-4.5, 4.5),
+      });
+    }
   }
 
   setFacilities(snapshots: readonly FacilitySnapshot[]): void {

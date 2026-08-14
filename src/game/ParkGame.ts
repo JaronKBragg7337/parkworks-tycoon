@@ -1,12 +1,16 @@
 import {
   ACESFilmicToneMapping,
   AmbientLight,
+  BoxGeometry,
   Clock,
   Color,
   DirectionalLight,
+  DoubleSide,
   FogExp2,
   Group,
   MathUtils,
+  Mesh,
+  MeshBasicMaterial,
   Object3D,
   Plane,
   PerspectiveCamera,
@@ -20,6 +24,20 @@ import {
 import { ParkSimulation } from '../core/ParkSimulation';
 import { ParkGrid, type CellBounds, type GridCell, type SurfaceOperationQuote } from '../core/ParkGrid';
 import { getPlaceableSpec } from '../core/catalog';
+import {
+  computeAwayProgress,
+  createEmptyAwayProfile,
+  type AwayParkProfile,
+  type ServicedNeed,
+} from '../core/awayReport';
+import {
+  PARK_SAVE_FORMAT,
+  PARK_SAVE_VERSION,
+  parseSave,
+  serializeSave,
+  type ParkSaveDocument,
+} from '../core/saveGame';
+import { resolveSaveBackend, type SaveBackend } from '../core/SaveStore';
 import type { FacilitySnapshot, GuestSnapshot, LitterSnapshot, PlacedObject, PlaceableKind } from '../core/types';
 import { InputController } from '../controls/InputController';
 import { cameraRelativeMovement } from '../controls/movementMath';
@@ -35,7 +53,7 @@ import {
 } from './freeCameraMath';
 import { InfrastructureBuilder, type InfrastructureTool } from './InfrastructureBuilder';
 import { ParkInfrastructureView } from './ParkInfrastructureView';
-import { PlacementSystem } from './PlacementSystem';
+import { PlacementSystem, createFacingArrowGeometry } from './PlacementSystem';
 import {
   INITIAL_PLACEMENT_POINTER_STATE,
   reducePlacementPointer,
@@ -48,6 +66,27 @@ interface GuestVisual {
 }
 
 type CameraMode = 'follow' | 'overview';
+
+/** Seconds of running simulation between background saves. */
+const AUTOSAVE_INTERVAL_SECONDS = 20;
+
+/**
+ * Fraction of the build cost returned when a building is sold. Remodelling is
+ * meant to be affordable but not free, so a park cannot be churned for profit.
+ */
+const RESALE_RATE = 0.7;
+
+/** A press shorter and stiller than this counts as a tap, not a camera drag. */
+const TAP_MAX_MOVEMENT_PX = 9;
+const TAP_MAX_DURATION_MS = 350;
+
+/** Where a building came from, so cancelling a move puts it back. */
+interface MovingOrigin {
+  id: string;
+  kind: PlaceableKind;
+  position: { x: number; z: number };
+  rotation: number;
+}
 
 export class ParkGame {
   private readonly root: HTMLElement;
@@ -88,13 +127,25 @@ export class ParkGame {
   private freeCamera: FreeCameraState = createFreeCameraState();
   private running = false;
   private started = false;
-  private mode: 'explore' | 'build' | 'placing' | 'surface' = 'explore';
+  private mode: 'explore' | 'build' | 'placing' | 'surface' | 'inspect' = 'explore';
   private cameraMode: CameraMode = 'follow';
   private activePlaceable: PlaceableKind | null = null;
   private drawingSurface = false;
   private placementPointer: PlacementPointerState = { ...INITIAL_PLACEMENT_POINTER_STATE };
   private lastStatsUiUpdate = 0;
   private isPaused = false;
+  private readonly saveBackend: SaveBackend;
+  private parkName = 'My Park';
+  private autosaveCountdown = AUTOSAVE_INTERVAL_SECONDS;
+  private savePending = false;
+  private saveInFlight = false;
+  private pendingSave: ParkSaveDocument | null = null;
+  private selectedId: string | null = null;
+  private movingOrigin: MovingOrigin | null = null;
+  private readonly selectionMarker = new Group();
+  private readonly selectionPad: Mesh;
+  private readonly selectionArrow: Mesh;
+  private tapCandidate: { x: number; y: number; time: number } | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -126,8 +177,32 @@ export class ParkGame {
     this.root.dataset.playerX = this.playerPosition.x.toFixed(3);
     this.root.dataset.playerZ = this.playerPosition.z.toFixed(3);
 
+    // Bright enough to read against grass, but still translucent so the
+    // building it belongs to stays the thing you are looking at.
+    this.selectionPad = new Mesh(
+      new BoxGeometry(1, 0.05, 1),
+      new MeshBasicMaterial({ color: 0x8af0c4, transparent: true, opacity: 0.5, depthWrite: false, fog: false }),
+    );
+    this.selectionArrow = new Mesh(
+      createFacingArrowGeometry(),
+      new MeshBasicMaterial({
+        color: 0x8af0c4,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+        depthTest: false,
+        side: DoubleSide,
+        fog: false,
+      }),
+    );
+    this.selectionArrow.renderOrder = 6;
+    this.selectionMarker.add(this.selectionPad, this.selectionArrow);
+    this.selectionMarker.visible = false;
+    this.saveBackend = resolveSaveBackend();
     this.ui = new GameUI(this.root, {
       onStart: () => this.openGates(),
+      onContinue: () => this.resumeSavedPark(),
+      onNewPark: () => this.discardSavedPark(),
       onToggleBuild: () => this.toggleBuildMode(),
       onSelectPlaceable: (kind) => this.beginPlacement(kind),
       onSelectInfrastructure: (tool) => this.beginInfrastructure(tool),
@@ -135,6 +210,10 @@ export class ParkGame {
       onRotate: () => this.rotatePlacement(),
       onConfirm: () => this.confirmBuild(),
       onCancel: () => this.cancelBuild(),
+      onMoveSelected: () => this.moveSelected(),
+      onRotateSelected: () => this.rotateSelected(),
+      onSellSelected: () => this.sellSelected(),
+      onCloseInspector: () => this.closeInspector(),
       onPause: () => this.togglePause(),
       onToggleCamera: () => this.toggleCameraMode(),
       onReframeCamera: () => this.reframeFreeCamera(),
@@ -164,6 +243,39 @@ export class ParkGame {
     this.ui.updateInfrastructure(this.parkGrid.getParcelSnapshots(), this.parkGrid.getCosts());
   }
 
+  /**
+   * Looks for a saved park and offers to resume it. Runs after construction so
+   * a slow or asynchronous store (Heartbeat's cloud save) never blocks the first
+   * frame; the splash is already on screen while this resolves.
+   */
+  async initialize(): Promise<void> {
+    let text: string | null = null;
+    try {
+      text = await this.saveBackend.load();
+    } catch {
+      text = null;
+    }
+    if (!text) return;
+
+    const { save, warnings } = parseSave(text);
+    if (!save) {
+      // A save we cannot read is worse than none: clear it so the player is not
+      // offered a Continue button that can never work.
+      await this.saveBackend.clear().catch(() => {});
+      if (warnings[0]) this.ui.toast(warnings[0], 'warning');
+      return;
+    }
+
+    this.pendingSave = save;
+    this.ui.showResumeOption({
+      parkName: save.parkName,
+      day: save.simulation.stats?.day ?? 1,
+      cash: save.simulation.stats?.cash ?? 0,
+      buildings: save.buildings.length,
+      storageLabel: this.saveBackend.label,
+    });
+  }
+
   start(): void {
     if (this.running) return;
     this.running = true;
@@ -180,6 +292,8 @@ export class ParkGame {
     this.placement.dispose();
     this.infrastructureView.dispose();
     window.removeEventListener('resize', this.resize);
+    window.removeEventListener('pagehide', this.saveBeforeHidden);
+    document.removeEventListener('visibilitychange', this.saveBeforeHidden);
     this.renderer.domElement.removeEventListener('pointermove', this.onPointerMove);
     this.renderer.domElement.removeEventListener('pointerdown', this.onPointerDown);
     this.renderer.domElement.removeEventListener('pointerup', this.onPointerUp);
@@ -206,6 +320,7 @@ export class ParkGame {
 
     this.player.position.copy(this.playerPosition);
     this.dynamicLayer.add(this.player);
+    this.world.add(this.selectionMarker);
 
     const ambient = new AmbientLight(0xaaccc5, 1.18);
     this.scene.add(ambient);
@@ -227,6 +342,190 @@ export class ParkGame {
     this.cameraTarget.copy(this.playerPosition).add(new Vector3(0, 1.25, 0));
     this.cameraTargetDesired.copy(this.cameraTarget);
     this.camera.lookAt(this.cameraTarget);
+  }
+
+  /**
+   * Selects an already-placed building so it can be turned, moved, or sold.
+   * Remodelling matters more than it looks: a park that cannot be edited is a
+   * park where one misplaced ride is permanent.
+   */
+  private selectPlaced(placed: PlacedObject): void {
+    this.selectedId = placed.id;
+    this.mode = 'inspect';
+    this.ui.setMode('inspect');
+    this.applyInputState();
+    this.infrastructureView.setLandMode(false);
+    this.applySimulationState();
+    this.updateSelectionMarker();
+    this.refreshInspector();
+  }
+
+  private closeInspector(): void {
+    this.selectedId = null;
+    this.selectionMarker.visible = false;
+    this.mode = 'explore';
+    this.ui.setMode('explore');
+    this.applyInputState();
+    this.applySimulationState();
+  }
+
+  private getSelected(): PlacedObject | null {
+    if (!this.selectedId) return null;
+    return this.placedObjects.find((placed) => placed.id === this.selectedId) ?? null;
+  }
+
+  private refreshInspector(): void {
+    const selected = this.getSelected();
+    if (!selected) return;
+    const connected =
+      selected.spec.serviceNeed === null || selected.object.userData.connected !== false;
+    const detail = selected.spec.serviceNeed === null
+      ? `Upkeep ${selected.spec.upkeep}/cycle`
+      : connected
+        ? `Open · queue ${selected.queueLength} · upkeep ${selected.spec.upkeep}/cycle`
+        : 'No path reaches this yet';
+    this.ui.setInspector({
+      name: selected.spec.name,
+      detail,
+      tone: connected ? 'positive' : 'warning',
+      resale: Math.round(selected.spec.cost * RESALE_RATE),
+    });
+  }
+
+  /**
+   * Highlights the selection and shows which way it faces. The whole marker is
+   * rotated with the building, so the arrow uses the unrotated footprint and
+   * still lands in front — the same trick the placement preview uses.
+   */
+  private updateSelectionMarker(): void {
+    const selected = this.getSelected();
+    if (!selected) {
+      this.selectionMarker.visible = false;
+      return;
+    }
+    const [footprintX, footprintZ] = selected.spec.footprint;
+    this.selectionPad.scale.set(footprintX + 0.6, 1, footprintZ + 0.6);
+    const arrowScale = Math.min(2.4, Math.max(1, Math.min(footprintX, footprintZ) * 0.34));
+    this.selectionArrow.scale.setScalar(arrowScale);
+    this.selectionArrow.position.set(0, 0.12, footprintZ / 2 + 0.55 + arrowScale * 0.6);
+    this.selectionMarker.position.set(selected.position.x, 0.06, selected.position.z);
+    this.selectionMarker.rotation.y = selected.rotation;
+    this.selectionMarker.visible = true;
+  }
+
+  /** Turns a placed building a quarter turn, reverting if it no longer fits. */
+  private rotateSelected(): void {
+    const selected = this.getSelected();
+    if (!selected) return;
+    const previous = selected.rotation;
+    const next = (previous + Math.PI / 2) % (Math.PI * 2);
+    const others = this.placedObjects.filter((placed) => placed.id !== selected.id);
+    if (!this.canOccupy(selected.spec, selected.position, next, others)) {
+      this.ui.toast('No room to turn it there', 'warning');
+      return;
+    }
+    selected.rotation = next;
+    selected.object.rotation.y = next;
+    this.syncFacilities();
+    this.updateSelectionMarker();
+    this.refreshInspector();
+    this.requestSave();
+  }
+
+  /** Lifts a building back into the placement flow, keeping its facing. */
+  private moveSelected(): void {
+    const selected = this.getSelected();
+    if (!selected) return;
+    this.movingOrigin = {
+      id: selected.id,
+      kind: selected.spec.kind,
+      position: { ...selected.position },
+      rotation: selected.rotation,
+    };
+    this.removePlaced(selected);
+    this.selectedId = null;
+    this.selectionMarker.visible = false;
+
+    this.activePlaceable = selected.spec.kind;
+    this.placementPointer = reducePlacementPointer(this.placementPointer, { type: 'begin' }).state;
+    this.mode = 'placing';
+    this.applyInputState();
+    this.infrastructureView.setLandMode(false);
+    this.ui.setMode('placing');
+    this.applySimulationState();
+    this.placement.begin(selected.spec.kind, selected.rotation);
+    this.placement.updatePointer(
+      window.innerWidth / 2,
+      window.innerHeight / 2,
+      this.camera,
+      this.placedObjects,
+    );
+    this.exposePlacementPointerState();
+    this.ui.toast('Pick a new spot, or cancel to put it back', 'neutral');
+  }
+
+  private sellSelected(): void {
+    const selected = this.getSelected();
+    if (!selected) return;
+    const resale = Math.round(selected.spec.cost * RESALE_RATE);
+    this.removePlaced(selected);
+    this.simulation.refundExpense(resale);
+    this.closeInspector();
+    this.syncFacilities();
+    this.ui.updateStats(this.simulation.getStats());
+    this.ui.toast(`${selected.spec.shortName} sold for $${resale.toLocaleString('en-US')}`, 'positive');
+    this.requestSave();
+  }
+
+  private removePlaced(placed: PlacedObject): void {
+    const index = this.placedObjects.indexOf(placed);
+    if (index >= 0) this.placedObjects.splice(index, 1);
+    placed.object.removeFromParent();
+  }
+
+  /** Footprint, land, and surface check used when editing something in place. */
+  private canOccupy(
+    spec: PlacedObject['spec'],
+    position: { x: number; z: number },
+    rotation: number,
+    others: readonly PlacedObject[],
+  ): boolean {
+    const bounds = this.footprintBounds(position, spec.footprint, rotation);
+    const cells = this.cellsInFootprint(bounds);
+    if (!cells.every((cell) => this.parkGrid.isOwned(cell))) return false;
+    if (!cells.every((cell) => this.parkGrid.getSurface(cell) === 'lawn')) return false;
+    return others.every((other) => {
+      const otherBounds = this.footprintBounds(other.position, other.spec.footprint, other.rotation);
+      return (
+        bounds.minX > otherBounds.maxX ||
+        bounds.maxX < otherBounds.minX ||
+        bounds.minZ > otherBounds.maxZ ||
+        bounds.maxZ < otherBounds.minZ
+      );
+    });
+  }
+
+  /** Returns the placed building under a screen point, if any. */
+  private pickPlaced(clientX: number, clientY: number): PlacedObject | null {
+    this.buildPointer.x = (clientX / window.innerWidth) * 2 - 1;
+    this.buildPointer.y = -(clientY / window.innerHeight) * 2 + 1;
+    this.buildRaycaster.setFromCamera(this.buildPointer, this.camera);
+    const hits = this.buildRaycaster.intersectObjects(
+      this.placedObjects.map((placed) => placed.object),
+      true,
+    );
+    const hit = hits[0];
+    if (!hit) return null;
+    return (
+      this.placedObjects.find((placed) => {
+        let node: Object3D | null = hit.object;
+        while (node) {
+          if (node === placed.object) return true;
+          node = node.parent;
+        }
+        return false;
+      }) ?? null
+    );
   }
 
   private seedStarterPark(): void {
@@ -260,6 +559,183 @@ export class ParkGame {
     this.started = true;
     this.applySimulationState();
     this.ui.toast('The park is open', 'positive');
+    this.requestSave();
+  }
+
+  /** Rebuilds the saved park, then reports what happened while the player was gone. */
+  private resumeSavedPark(): void {
+    const save = this.pendingSave;
+    this.pendingSave = null;
+    if (!save) {
+      this.openGates();
+      return;
+    }
+
+    this.applySave(save);
+    this.started = save.started;
+
+    const elapsedSeconds = save.savedAt > 0 ? (Date.now() - save.savedAt) / 1000 : 0;
+    if (this.started && elapsedSeconds > 0) {
+      const report = computeAwayProgress(
+        this.simulation.getStats(),
+        this.buildAwayProfile(),
+        elapsedSeconds,
+        this.simulation.getLitter().length,
+      );
+      if (report) {
+        const reputationBefore = this.simulation.getStats().reputation;
+        this.simulation.applyAwayProgress(report);
+        this.ui.showAwayReport(report, reputationBefore);
+      }
+    }
+
+    if (!this.started) this.started = true;
+    this.applySimulationState();
+    this.ui.updateStats(this.simulation.getStats());
+    this.requestSave();
+  }
+
+  /** Throws away the stored park and returns the splash to its first-run state. */
+  private discardSavedPark(): void {
+    this.pendingSave = null;
+    void this.saveBackend.clear().catch(() => {});
+    this.ui.showFreshStart();
+    this.ui.toast('Saved park cleared', 'neutral');
+  }
+
+  private applySave(save: ParkSaveDocument): void {
+    if (!this.parkGrid.loadSaveState(save.grid)) {
+      this.ui.toast('That park did not fit this map — starting fresh', 'warning');
+      return;
+    }
+
+    this.parkName = save.parkName;
+    this.clearPlacedObjects();
+    for (const building of save.buildings) {
+      this.addSavedPlaceable(building.id, building.kind, { x: building.x, z: building.z }, building.rotation);
+    }
+
+    this.simulation.loadSaveState(save.simulation);
+    this.playerPosition.set(save.player.x, 0, save.player.z);
+    this.player.position.copy(this.playerPosition);
+    this.root.dataset.playerX = this.playerPosition.x.toFixed(3);
+    this.root.dataset.playerZ = this.playerPosition.z.toFixed(3);
+
+    this.placement.reserveIds(this.placedObjects.map((placed) => placed.id));
+    this.refreshInfrastructure();
+    this.syncFacilities();
+    this.syncLitterVisuals(this.simulation.getLitter());
+  }
+
+  private clearPlacedObjects(): void {
+    for (const placed of this.placedObjects) {
+      placed.object.removeFromParent();
+    }
+    this.placedObjects.length = 0;
+  }
+
+  private addSavedPlaceable(
+    id: string,
+    kind: PlaceableKind,
+    position: { x: number; z: number },
+    rotation: number,
+  ): void {
+    const spec = this.getSpec(kind);
+    const object = this.assets.createPlaceable(kind);
+    object.position.set(position.x, 0, position.z);
+    object.rotation.y = rotation;
+    this.world.add(object);
+    this.placedObjects.push({
+      id,
+      spec,
+      position: { ...position },
+      rotation,
+      object,
+      queueLength: 0,
+      activeUsers: 0,
+    });
+  }
+
+  private captureSave(): ParkSaveDocument {
+    return {
+      format: PARK_SAVE_FORMAT,
+      version: PARK_SAVE_VERSION,
+      savedAt: Date.now(),
+      parkName: this.parkName,
+      started: this.started,
+      grid: this.parkGrid.getSaveState(),
+      simulation: this.simulation.getSaveState(),
+      buildings: this.placedObjects.map((placed) => ({
+        id: placed.id,
+        kind: placed.spec.kind,
+        x: placed.position.x,
+        z: placed.position.z,
+        rotation: placed.rotation,
+      })),
+      player: { x: this.playerPosition.x, z: this.playerPosition.z },
+    };
+  }
+
+  /**
+   * Marks the park dirty. Writes are coalesced so a burst of construction does
+   * not hammer the store, and never overlap so a slow cloud write cannot
+   * interleave two versions of the same park.
+   */
+  private requestSave(): void {
+    this.savePending = true;
+    this.autosaveCountdown = AUTOSAVE_INTERVAL_SECONDS;
+    void this.flushSave();
+  }
+
+  private async flushSave(): Promise<void> {
+    if (!this.savePending || this.saveInFlight) return;
+    this.savePending = false;
+    this.saveInFlight = true;
+    try {
+      await this.saveBackend.save(serializeSave(this.captureSave()));
+    } catch {
+      // A failed write is not worth interrupting play for; the next autosave
+      // tick will try again with fresher state anyway.
+      this.savePending = true;
+    } finally {
+      this.saveInFlight = false;
+    }
+  }
+
+  /**
+   * Describes the park to the offline projection: how much appeal draws guests,
+   * what upkeep costs, and what each need's facilities can actually serve.
+   * Only connected facilities count, exactly as in the live simulation.
+   */
+  private buildAwayProfile(): AwayParkProfile {
+    const profile = createEmptyAwayProfile();
+    const revenueWeighted: Record<ServicedNeed, number> = { hunger: 0, fun: 0, bladder: 0, rest: 0 };
+
+    for (const placed of this.placedObjects) {
+      const spec = placed.spec;
+      profile.upkeepPerCycle += spec.upkeep;
+
+      const connected = spec.serviceNeed === null || placed.object.userData.connected !== false;
+      if (!connected) continue;
+      profile.appeal += spec.appeal;
+
+      if (spec.serviceNeed === 'trash') profile.binCount += 1;
+      if (spec.category === 'food') profile.foodCount += 1;
+
+      const need = spec.serviceNeed;
+      if (need === null || need === 'trash' || need === 'information') continue;
+      if (spec.serviceSeconds <= 0 || spec.capacity <= 0) continue;
+
+      const throughput = spec.capacity / spec.serviceSeconds;
+      profile.needs[need].throughput += throughput;
+      revenueWeighted[need] += throughput * spec.revenue;
+    }
+
+    for (const need of Object.keys(profile.needs) as ServicedNeed[]) {
+      const throughput = profile.needs[need].throughput;
+      profile.needs[need].revenuePerService = throughput > 0 ? revenueWeighted[need] / throughput : 0;
+    }
+    return profile;
   }
 
   private toggleBuildMode(): void {
@@ -322,6 +798,19 @@ export class ParkGame {
   }
 
   private cancelPlacement(): void {
+    const moving = this.movingOrigin;
+    if (moving) {
+      // A cancelled move is not a refund: the building was never re-bought, so
+      // it simply goes back where it stood.
+      this.movingOrigin = null;
+      this.addSavedPlaceable(moving.id, moving.kind, moving.position, moving.rotation);
+      this.placement.cancel(false);
+      this.placementPointer = reducePlacementPointer(this.placementPointer, { type: 'cancel' }).state;
+      this.syncFacilities();
+      this.exitPlacement();
+      this.ui.toast('Move cancelled', 'neutral');
+      return;
+    }
     if (this.activePlaceable) this.simulation.refund(this.activePlaceable);
     this.placement.cancel(false);
     this.placementPointer = reducePlacementPointer(this.placementPointer, { type: 'cancel' }).state;
@@ -385,6 +874,7 @@ export class ParkGame {
     this.refreshInfrastructure();
     this.syncFacilities();
     this.updateInfrastructureQuote();
+    this.requestSave();
     this.ui.toast(
       tool === 'demolish'
         ? `${result.cellCount} path ${result.cellCount === 1 ? 'tile' : 'tiles'} removed`
@@ -407,6 +897,7 @@ export class ParkGame {
     }
     this.refreshInfrastructure();
     this.infrastructureView.setLandMode(this.mode === 'build');
+    this.requestSave();
     const parcel = this.parkGrid.getParcelSnapshot(parcelId);
     this.ui.toast(`${parcel?.name ?? 'Land'} added to your park`, 'positive');
   }
@@ -466,6 +957,10 @@ export class ParkGame {
   }
 
   private onPlaced(placed: PlacedObject): void {
+    if (this.movingOrigin) {
+      placed.id = this.movingOrigin.id;
+      this.movingOrigin = null;
+    }
     this.placedObjects.push(placed);
     this.syncFacilities();
     this.activePlaceable = null;
@@ -474,6 +969,7 @@ export class ParkGame {
     this.applyInputState();
     this.infrastructureView.setLandMode(false);
     this.applySimulationState();
+    this.requestSave();
     const connected = placed.spec.serviceNeed === null || placed.object.userData.connected !== false;
     this.ui.toast(
       connected ? `${placed.spec.shortName} opened` : `${placed.spec.shortName} needs a connected path`,
@@ -618,12 +1114,29 @@ export class ParkGame {
 
   private bindEvents(): void {
     window.addEventListener('resize', this.resize);
+    // Phones rarely fire unload. pagehide and the hidden visibility state are
+    // the two that actually arrive when a player switches apps or locks the
+    // screen, which is exactly when an unsaved park would otherwise be lost.
+    window.addEventListener('pagehide', this.saveBeforeHidden);
+    document.addEventListener('visibilitychange', this.saveBeforeHidden);
     this.renderer.domElement.addEventListener('pointermove', this.onPointerMove);
     this.renderer.domElement.addEventListener('pointerdown', this.onPointerDown);
     this.renderer.domElement.addEventListener('pointerup', this.onPointerUp);
     this.renderer.domElement.addEventListener('pointercancel', this.onPointerUp);
     this.renderer.domElement.addEventListener('contextmenu', this.preventContextMenu);
   }
+
+  private saveBeforeHidden = (event: Event): void => {
+    // pagehide can fire while the document still reports itself visible, so the
+    // visibility guard only applies to visibilitychange.
+    if (event.type === 'visibilitychange' && document.visibilityState === 'visible') return;
+    if (!this.started) return;
+    // An unconfirmed placement has already been paid for but does not exist yet.
+    // Saving as-is would bank the spend and lose the building, so settle it
+    // first: cancelling refunds a new build, or puts a moved one back.
+    if (this.mode === 'placing') this.cancelPlacement();
+    this.requestSave();
+  };
 
   private onPointerMove = (event: PointerEvent): void => {
     if (this.mode === 'placing') {
@@ -647,6 +1160,15 @@ export class ParkGame {
   };
 
   private onPointerDown = (event: PointerEvent): void => {
+    // A press in a mode where the world is selectable might turn out to be a
+    // tap on a building rather than a camera drag; onPointerUp decides.
+    this.tapCandidate =
+      (this.mode === 'explore' || this.mode === 'build' || this.mode === 'inspect') &&
+      event.isPrimary &&
+      (event.pointerType !== 'mouse' || event.button === 0)
+        ? { x: event.clientX, y: event.clientY, time: event.timeStamp }
+        : null;
+
     if (
       this.mode === 'placing' &&
       event.isPrimary &&
@@ -682,6 +1204,24 @@ export class ParkGame {
   };
 
   private onPointerUp = (event: PointerEvent): void => {
+    const tap = this.tapCandidate;
+    this.tapCandidate = null;
+    if (tap && event.type === 'pointerup') {
+      const travelled = Math.hypot(event.clientX - tap.x, event.clientY - tap.y);
+      const heldFor = event.timeStamp - tap.time;
+      if (travelled <= TAP_MAX_MOVEMENT_PX && heldFor <= TAP_MAX_DURATION_MS) {
+        const picked = this.pickPlaced(event.clientX, event.clientY);
+        if (picked) {
+          this.selectPlaced(picked);
+          return;
+        }
+        if (this.mode === 'inspect') {
+          this.closeInspector();
+          return;
+        }
+      }
+    }
+
     if (this.mode !== 'surface' || !this.drawingSurface) return;
     this.drawingSurface = false;
     this.infrastructureBuilder.endStroke();
@@ -728,6 +1268,11 @@ export class ParkGame {
     if (elapsed - this.lastStatsUiUpdate > 0.15) {
       this.ui.updateStats(this.simulation.getStats());
       this.lastStatsUiUpdate = elapsed;
+    }
+
+    if (this.simulation.isRunning()) {
+      this.autosaveCountdown -= delta;
+      if (this.autosaveCountdown <= 0) this.requestSave();
     }
 
     this.renderer.render(this.scene, this.camera);
