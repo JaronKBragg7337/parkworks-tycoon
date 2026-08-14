@@ -227,6 +227,8 @@ export class ParkGame {
       onPause: () => this.togglePause(),
       onToggleCamera: () => this.toggleCameraMode(),
       onReframeCamera: () => this.reframeFreeCamera(),
+      onSetPrice: (kind, price) => this.setPrice(kind, price),
+      onStartOver: () => void this.startOver(),
     });
 
     const joystick = this.requireElement('#movement-joystick');
@@ -402,7 +404,46 @@ export class ParkGame {
       detail,
       tone: connected ? 'positive' : 'warning',
       resale: Math.round(selected.spec.cost * RESALE_RATE),
+      price: this.simulation.getPrice(selected.spec.kind),
     });
+  }
+
+  /** Applies a price change, then re-renders everything that quotes a price. */
+  private setPrice(kind: PlaceableKind, price: number): void {
+    const applied = this.simulation.setPrice(kind, price);
+    this.refreshPricing();
+    this.refreshInspector();
+    this.ui.toast(
+      applied > 0
+        ? `${getPlaceableSpec(kind).shortName} now ${applied.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} per guest`
+        : `${getPlaceableSpec(kind).shortName} is now free`,
+      'neutral',
+    );
+    this.requestSave();
+  }
+
+  private refreshPricing(): void {
+    const stats = this.simulation.getStats();
+    this.ui.updatePricing(this.simulation.getPrices(), stats.reputation, {
+      day: stats.day,
+      cash: stats.cash,
+      buildings: this.placedObjects.length,
+    });
+  }
+
+  /**
+   * Abandons the park and returns to the splash, as if the game had never been
+   * played on this device. The UI has already asked twice by the time this runs.
+   *
+   * The saved copy goes first. If the page were reloaded between clearing the
+   * world and clearing the store, a cleared store means a clean start, whereas
+   * a surviving save would resurrect the park the player just chose to destroy.
+   */
+  private async startOver(): Promise<void> {
+    this.started = false;
+    this.applySimulationState();
+    await this.saveBackend.clear().catch(() => {});
+    window.location.reload();
   }
 
   /**
@@ -723,6 +764,7 @@ export class ParkGame {
   private buildAwayProfile(): AwayParkProfile {
     const profile = createEmptyAwayProfile();
     const revenueWeighted: Record<ServicedNeed, number> = { hunger: 0, fun: 0, bladder: 0, rest: 0 };
+    const acceptanceWeighted: Record<ServicedNeed, number> = { hunger: 0, fun: 0, bladder: 0, rest: 0 };
 
     for (const placed of this.placedObjects) {
       const spec = placed.spec;
@@ -741,12 +783,16 @@ export class ParkGame {
 
       const throughput = spec.capacity / spec.serviceSeconds;
       profile.needs[need].throughput += throughput;
-      revenueWeighted[need] += throughput * spec.revenue;
+      // Prices, not spec sheets: a park left with the carousel at triple rate
+      // must earn triple rate offline too, and lose the guests that costs.
+      revenueWeighted[need] += throughput * this.simulation.getPrice(spec.kind);
+      acceptanceWeighted[need] += throughput * this.simulation.getAcceptanceRate(spec.kind);
     }
 
     for (const need of Object.keys(profile.needs) as ServicedNeed[]) {
       const throughput = profile.needs[need].throughput;
       profile.needs[need].revenuePerService = throughput > 0 ? revenueWeighted[need] / throughput : 0;
+      profile.needs[need].acceptance = throughput > 0 ? acceptanceWeighted[need] / throughput : 1;
     }
     return profile;
   }
@@ -1312,6 +1358,10 @@ export class ParkGame {
 
     if (elapsed - this.lastStatsUiUpdate > 0.15) {
       this.ui.updateStats(this.simulation.getStats());
+      // Reputation moves as guests leave, and reputation is what decides which
+      // prices guests accept — so the office tab has to follow it live rather
+      // than showing what was true when it was opened.
+      this.refreshPricing();
       this.lastStatsUiUpdate = elapsed;
     }
 

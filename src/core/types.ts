@@ -139,4 +139,5 @@ export type SimulationEvent =
   | { type: 'litter-created'; litter: LitterSnapshot }
   | { type: 'litter-removed'; litterId: string; byPlayer: boolean }
   | { type: 'reputation-changed'; delta: number }
+  | { type: 'price-changed'; kind: PlaceableKind; price: number }
   | { type: 'insufficient-funds'; required: number };

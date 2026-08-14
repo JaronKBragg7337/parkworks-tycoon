@@ -15,35 +15,22 @@
  * specific guest went where. Offline earnings are therefore an upper bound on a
  * well-connected park and are capped in time so idling is never the best move.
  */
+import {
+  GUEST_LIFETIME_SECONDS,
+  NEED_GROWTH_PER_SECOND,
+  NEED_RELIEF_PER_SERVICE,
+  SERVICED_NEEDS,
+  type ServicedNeed,
+} from './needRates';
 import type { ParkStats } from './types';
 
-/** Need growth per second per guest — ParkSimulation.updateGuest. */
-const NEED_GROWTH_PER_SECOND = {
-  hunger: 0.0042,
-  fun: 0.0036,
-  bladder: 0.0031,
-  rest: 0.0022,
-} as const;
-
-/** Need consumed by one completed service — ParkSimulation.completeService. */
-const NEED_RELIEF_PER_SERVICE = {
-  hunger: 0.72,
-  fun: 0.82,
-  bladder: 0.83,
-  rest: 0.6,
-} as const;
-
-export type ServicedNeed = keyof typeof NEED_GROWTH_PER_SECOND;
-
-export const SERVICED_NEEDS: readonly ServicedNeed[] = ['hunger', 'fun', 'bladder', 'rest'];
+export { SERVICED_NEEDS };
+export type { ServicedNeed };
 
 /** ParkSimulation.processSpawning — an economic ceiling, not a render one. */
 const MAX_GUESTS = 600;
 const BASE_GUESTS = 5;
 const APPEAL_PER_GUEST = 3;
-
-/** ParkSimulation.updateGuest — guests leave after this many seconds. */
-const GUEST_LIFETIME_SECONDS = 155;
 
 /** ParkSimulation.processUpkeep charges the full upkeep total this often. */
 const UPKEEP_INTERVAL_SECONDS = 45;
@@ -78,8 +65,14 @@ export const AWAY_MINIMUM_SECONDS = 60;
 export interface AwayNeedCapacity {
   /** Completed services per second at full utilisation: sum of capacity / serviceSeconds. */
   throughput: number;
-  /** Throughput-weighted average revenue per completed service. */
+  /** Throughput-weighted average revenue per completed service, at today's prices. */
   revenuePerService: number;
+  /**
+   * Share of guests willing to pay what this need's facilities charge, 0 to 1.
+   * A park left overpriced earns less while nobody is watching, exactly as it
+   * would have on screen. Omitted means 1: nobody is refusing anything.
+   */
+  acceptance?: number;
 }
 
 export interface AwayParkProfile {
@@ -116,10 +109,10 @@ export function createEmptyAwayProfile(): AwayParkProfile {
     appeal: 0,
     upkeepPerCycle: 0,
     needs: {
-      hunger: { throughput: 0, revenuePerService: 0 },
-      fun: { throughput: 0, revenuePerService: 0 },
-      bladder: { throughput: 0, revenuePerService: 0 },
-      rest: { throughput: 0, revenuePerService: 0 },
+      hunger: { throughput: 0, revenuePerService: 0, acceptance: 1 },
+      fun: { throughput: 0, revenuePerService: 0, acceptance: 1 },
+      bladder: { throughput: 0, revenuePerService: 0, acceptance: 1 },
+      rest: { throughput: 0, revenuePerService: 0, acceptance: 1 },
     },
     binCount: 0,
     foodCount: 0,
@@ -160,8 +153,15 @@ export function computeAwayProgress(
     const capacity = profile.needs[need];
     // Demand is how fast the population generates this need, expressed in
     // services per second: growth rate divided by what one service relieves.
+    // Guests who refuse the price are demand the park never gets to meet, so
+    // they are removed here rather than discounted from the revenue afterwards.
+    const acceptance = clamp01(
+      typeof capacity.acceptance === 'number' && Number.isFinite(capacity.acceptance)
+        ? capacity.acceptance
+        : 1,
+    );
     const demandPerSecond =
-      (population * NEED_GROWTH_PER_SECOND[need]) / NEED_RELIEF_PER_SERVICE[need];
+      ((population * NEED_GROWTH_PER_SECOND[need]) / NEED_RELIEF_PER_SERVICE[need]) * acceptance;
     const servedPerSecond = Math.min(demandPerSecond, capacity.throughput);
     const services = servedPerSecond * creditedSeconds;
 

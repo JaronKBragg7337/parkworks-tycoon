@@ -1,5 +1,14 @@
 import type { AwayReport } from '../core/awayReport';
 import { CATEGORY_LABELS, PLACEABLE_SPECS } from '../core/catalog';
+import {
+  MAX_PRICE_MULTIPLE,
+  acceptanceRate,
+  expectedRevenuePerGuest,
+  isPriceable,
+  priceFor,
+  priceTolerance,
+  type PriceBook,
+} from '../core/pricing';
 import type { ParkStats, PlaceableCategory, PlaceableKind, SimulationEvent } from '../core/types';
 import {
   DEFAULT_SURFACE_COSTS,
@@ -39,6 +48,10 @@ export interface GameUICallbacks {
   onPause: () => void;
   onToggleCamera: () => void;
   onReframeCamera: () => void;
+  /** Sets what one kind of facility charges every guest who uses it. */
+  onSetPrice: (kind: PlaceableKind, price: number) => void;
+  /** Abandons the park and starts again. Only called after both confirmations. */
+  onStartOver: () => void;
 }
 
 type GameUIMode = 'explore' | 'build' | 'placing' | 'surface' | 'inspect';
@@ -49,8 +62,18 @@ export interface InspectorInfo {
   detail: string;
   tone: 'positive' | 'warning';
   resale: number;
+  /** What this building charges each guest it serves. Zero for free facilities. */
+  price?: number;
 }
-type CatalogSection = 'infrastructure' | PlaceableCategory;
+
+/** The park as the office tab needs to describe it when offering to start over. */
+export interface ParkSummary {
+  day: number;
+  cash: number;
+  buildings: number;
+}
+
+type CatalogSection = 'infrastructure' | 'office' | PlaceableCategory;
 
 function money(value: number): string {
   return `$${Math.round(value).toLocaleString('en-US')}`;
@@ -103,6 +126,10 @@ export class GameUI {
   private infrastructureTool: InfrastructureTool = 'sidewalk';
   private parcels: readonly ParcelSnapshot[] = [];
   private infrastructureCosts: ParkGridCosts = DEFAULT_SURFACE_COSTS;
+  private prices: PriceBook = {};
+  private reputation = 38;
+  private parkSummary: ParkSummary = { day: 1, cash: 0, buildings: 0 };
+  private pricingSignature = '';
   private toastTimer = 0;
 
   constructor(root: HTMLElement, callbacks: GameUICallbacks) {
@@ -199,9 +226,44 @@ export class GameUI {
   }
 
   setInspector(info: InspectorInfo): void {
+    // What a building earns per guest is the number the player is actually
+    // managing, so it sits beside the name rather than being something they
+    // have to remember from the catalog.
+    const charge = typeof info.price === 'number'
+      ? info.price > 0
+        ? `<span class="inspector-charge">${money(info.price)} per guest</span>`
+        : '<span class="inspector-charge is-free">Free to use</span>'
+      : '';
     this.inspectorStatus.innerHTML =
-      `<strong>${info.name}</strong><span class="placement-validity ${info.tone === 'positive' ? 'is-valid' : 'is-warning'}">${info.detail}</span>`;
+      `<strong>${info.name}</strong><span class="placement-validity ${info.tone === 'positive' ? 'is-valid' : 'is-warning'}">${info.detail}</span>${charge}`;
     this.sellButton.innerHTML = `${icon('close')}<span>Sell ${money(info.resale)}</span>`;
+  }
+
+  /**
+   * Hands the office tab the numbers it needs: the prices in force, the
+   * reputation that decides what guests will tolerate, and enough about the
+   * park to describe it honestly in the start-over confirmation.
+   */
+  updatePricing(prices: Readonly<PriceBook>, reputation: number, summary: ParkSummary): void {
+    this.prices = { ...prices };
+    this.reputation = reputation;
+    this.parkSummary = { ...summary };
+    if (this.selectedCategory !== 'office' || !this.buildPanel.classList.contains('is-open')) return;
+
+    // This is called from the simulation loop, so it must not rebuild the panel
+    // sixty times a second. Only what the office actually displays counts as a
+    // change: prices, whole-number reputation, and the park line in the
+    // start-over warning.
+    const signature = [
+      JSON.stringify(this.prices),
+      Math.round(reputation),
+      summary.day,
+      Math.round(summary.cash),
+      summary.buildings,
+    ].join('|');
+    if (signature === this.pricingSignature) return;
+    this.pricingSignature = signature;
+    this.renderCatalog();
   }
 
   updateStats(stats: Readonly<ParkStats>): void {
@@ -450,6 +512,15 @@ export class GameUI {
         </div>
       </section>
 
+      <section class="away-report confirm-dialog" id="confirm-dialog" data-ui hidden role="alertdialog" aria-labelledby="confirm-heading" aria-describedby="confirm-body">
+        <div class="away-card glass-panel">
+          <span class="eyebrow">Confirm</span>
+          <h2 id="confirm-heading"></h2>
+          <p class="away-note" id="confirm-body"></p>
+          <div class="confirm-actions" id="confirm-actions"></div>
+        </div>
+      </section>
+
       <section class="away-report" id="away-report" data-ui hidden aria-live="polite">
         <div class="away-card glass-panel">
           <span class="eyebrow">While you were away</span>
@@ -515,35 +586,189 @@ export class GameUI {
     const categories: CatalogSection[] = [
       'infrastructure',
       ...(Object.keys(CATEGORY_LABELS) as PlaceableCategory[]),
+      'office',
     ];
     tabs.innerHTML = categories
-      .map((category) => `<button data-category="${category}" class="${category === this.selectedCategory ? 'is-active' : ''}">${category === 'infrastructure' ? 'Paths & land' : CATEGORY_LABELS[category]}</button>`)
+      .map((category) => `<button data-category="${category}" class="${category === this.selectedCategory ? 'is-active' : ''}">${this.categoryLabel(category)}</button>`)
       .join('');
     for (const button of tabs.querySelectorAll<HTMLButtonElement>('button')) {
       button.addEventListener('click', () => {
         this.selectedCategory = button.dataset.category as CatalogSection;
+        // Force the next pricing update through: the panel it would compare
+        // against is the one we are about to replace.
+        this.pricingSignature = '';
         this.renderCatalog();
       });
     }
 
     const catalog = this.requireElement('#catalog-grid');
+    catalog.classList.toggle('is-office', this.selectedCategory === 'office');
     if (this.selectedCategory === 'infrastructure') {
       this.renderInfrastructureCatalog(catalog);
       return;
     }
+    if (this.selectedCategory === 'office') {
+      this.renderOffice(catalog);
+      return;
+    }
     catalog.classList.remove('is-infrastructure');
     catalog.innerHTML = PLACEABLE_SPECS.filter((spec) => spec.category === this.selectedCategory)
-      .map((spec) => `
+      .map((spec) => {
+        // Cost is what the player pays once; the earn line is what comes back
+        // every time a guest uses it. Both belong on the card, because the
+        // second is the only reason to pay the first.
+        const charge = priceFor(spec.kind, this.prices);
+        const earns = charge > 0
+          ? `<small class="catalog-earns">Earns ${money(charge)} per guest</small>`
+          : '<small class="catalog-earns is-free">Free for guests</small>';
+        return `
         <button class="catalog-card" data-kind="${spec.kind}">
           <span class="catalog-icon">${icon(spec.icon as Parameters<typeof icon>[0])}</span>
-          <span class="catalog-copy"><strong>${spec.shortName}</strong><small>${spec.description}</small></span>
+          <span class="catalog-copy"><strong>${spec.shortName}</strong><small>${spec.description}</small>${earns}</span>
           <span class="catalog-price">${money(spec.cost)}</span>
         </button>
-      `)
+      `;
+      })
       .join('');
     for (const button of catalog.querySelectorAll<HTMLButtonElement>('[data-kind]')) {
       button.addEventListener('click', () => this.callbacks.onSelectPlaceable(button.dataset.kind as PlaceableKind));
     }
+  }
+
+  private categoryLabel(category: CatalogSection): string {
+    if (category === 'infrastructure') return 'Paths & land';
+    if (category === 'office') return 'Park office';
+    return CATEGORY_LABELS[category];
+  }
+
+  /**
+   * The management screen: what the park charges, and the way out.
+   *
+   * Prices live here rather than on each building because a price is a park
+   * policy — every carousel in the park charges the same, and raising it is a
+   * decision about the whole business rather than about one ride.
+   */
+  private renderOffice(catalog: HTMLElement): void {
+    catalog.classList.remove('is-infrastructure');
+    const tolerance = priceTolerance(this.reputation);
+    const priceable = PLACEABLE_SPECS.filter((spec) => isPriceable(spec.kind));
+
+    catalog.innerHTML = `
+      <section class="infrastructure-section" aria-labelledby="prices-heading">
+        <div class="catalog-section-heading">
+          <div><span class="eyebrow">Pricing</span><h3 id="prices-heading">What the park charges</h3></div>
+          <span>At reputation ${Math.round(this.reputation)}, guests pay up to <strong>${Math.round(tolerance * 100)}%</strong> of the standard price before they start walking away.</span>
+        </div>
+        <div class="price-list">
+          ${priceable.map((spec) => this.priceRow(spec.kind)).join('')}
+        </div>
+        <p class="parcel-note">Raise your reputation and you can raise your prices. Charge past what your park has earned and guests refuse the queue — which lowers your reputation, and lowers what you can charge.</p>
+      </section>
+      <section class="infrastructure-section danger-section" aria-labelledby="startover-heading">
+        <div class="catalog-section-heading">
+          <div><span class="eyebrow">Danger</span><h3 id="startover-heading">Start over</h3></div>
+          <span>Clears this park completely and begins a new one.</span>
+        </div>
+        <button class="ghost-action is-danger" id="start-over-button" type="button">Start over with a new park</button>
+      </section>
+    `;
+
+    for (const button of catalog.querySelectorAll<HTMLButtonElement>('[data-price-kind]')) {
+      button.addEventListener('click', () => {
+        const kind = button.dataset.priceKind as PlaceableKind;
+        const step = Number(button.dataset.priceStep);
+        if (!kind || !Number.isFinite(step)) return;
+        this.callbacks.onSetPrice(kind, priceFor(kind, this.prices) + step);
+      });
+    }
+    this.requireElement('#start-over-button').addEventListener('click', () => this.confirmStartOver());
+  }
+
+  private priceRow(kind: PlaceableKind): string {
+    const spec = PLACEABLE_SPECS.find((item) => item.kind === kind);
+    if (!spec) return '';
+    const price = priceFor(kind, this.prices);
+    const accepted = acceptanceRate(kind, this.prices, this.reputation);
+    const expected = expectedRevenuePerGuest(kind, this.prices, this.reputation);
+    const share = Math.round(accepted * 100);
+    const tone = share >= 100 ? 'is-valid' : share >= 50 ? 'is-warning' : 'is-invalid';
+    const verdict = share >= 100
+      ? 'Everyone pays this'
+      : share > 0
+        ? `Only ${share}% of guests will pay`
+        : 'Nobody will pay this';
+    const ceiling = spec.revenue * MAX_PRICE_MULTIPLE;
+    // The step scales with the price so a $35 drop tower and a $19 lemonade
+    // both take a sensible number of taps to move meaningfully.
+    const step = Math.max(1, Math.round(spec.revenue * 0.1));
+
+    return `
+      <div class="price-row">
+        <span class="catalog-icon">${icon(spec.icon as Parameters<typeof icon>[0])}</span>
+        <span class="catalog-copy">
+          <strong>${spec.shortName}</strong>
+          <small>Standard ${money(spec.revenue)} · earning ${money(expected)} per guest</small>
+          <small class="placement-validity ${tone}">${verdict}</small>
+        </span>
+        <span class="price-stepper">
+          <button type="button" data-price-kind="${kind}" data-price-step="${-step}" aria-label="Lower the price of ${spec.shortName}" ${price <= 0 ? 'disabled' : ''}>−</button>
+          <strong>${money(price)}</strong>
+          <button type="button" data-price-kind="${kind}" data-price-step="${step}" aria-label="Raise the price of ${spec.shortName}" ${price >= ceiling ? 'disabled' : ''}>+</button>
+        </span>
+      </div>
+    `;
+  }
+
+  /**
+   * Two confirmations, on purpose. A park represents hours of play, and a
+   * mispress that silently destroys one is the worst outcome this game has. The
+   * first step spells out exactly what will be lost; the second makes the
+   * player name the act with a button that says what it does.
+   */
+  private confirmStartOver(): void {
+    const { day, cash, buildings } = this.parkSummary;
+    this.showConfirm({
+      heading: 'Start over?',
+      body: `This park is on day ${day}, holds ${money(cash)}, and has ${buildings} ${buildings === 1 ? 'building' : 'buildings'}. Starting over clears all of it.`,
+      confirmLabel: 'Continue',
+      onConfirm: () => {
+        this.showConfirm({
+          heading: 'This cannot be undone',
+          body: 'The park, its buildings, its paths, and its saved copy will be gone for good. There is no way back to it.',
+          confirmLabel: 'Delete my park',
+          onConfirm: () => this.callbacks.onStartOver(),
+        });
+      },
+    });
+  }
+
+  private showConfirm(options: {
+    heading: string;
+    body: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  }): void {
+    const panel = this.requireElement('#confirm-dialog');
+    this.requireElement('#confirm-heading').textContent = options.heading;
+    this.requireElement('#confirm-body').textContent = options.body;
+
+    // Replacing the buttons drops every listener from the previous step, so the
+    // first confirmation can never fire the second one's action.
+    const actions = this.requireElement('#confirm-actions');
+    actions.innerHTML = `
+      <button class="secondary-action" id="confirm-cancel" type="button">Keep my park</button>
+      <button class="primary-action is-danger" id="confirm-accept" type="button">${options.confirmLabel}</button>
+    `;
+    panel.hidden = false;
+
+    const close = () => {
+      panel.hidden = true;
+    };
+    this.requireElement('#confirm-cancel').addEventListener('click', close);
+    this.requireElement('#confirm-accept').addEventListener('click', () => {
+      close();
+      options.onConfirm();
+    });
   }
 
   private renderInfrastructureCatalog(catalog: HTMLElement): void {

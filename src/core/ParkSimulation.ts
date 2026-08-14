@@ -1,4 +1,14 @@
 import { getPlaceableSpec } from './catalog';
+import {
+  FUN_PRIORITY_WEIGHT,
+  FUN_RECONSIDER_THRESHOLD,
+  GUEST_LIFETIME_SECONDS,
+  NEED_FLOOR_AFTER_SERVICE,
+  NEED_GROWTH_PER_SECOND,
+  NEED_PRIORITY_THRESHOLD,
+  NEED_RELIEF_PER_SERVICE,
+} from './needRates';
+import { acceptanceRate, priceFor, sanitizePriceBook, type PriceBook } from './pricing';
 import { SeededRandom } from './random';
 import type {
   FacilitySnapshot,
@@ -31,6 +41,13 @@ interface GuestRuntime extends GuestSnapshot {
   dwellTimer: number;
   trashTimer: number;
   targetNeed: ServiceNeed;
+  /**
+   * Where this guest sits in the crowd's willingness to pay, 0 (will pay almost
+   * anything) to 1 (walks away first). Drawn once at the gate rather than rolled
+   * per decision, so a guest who refused the price of a ride keeps refusing it
+   * instead of flickering between queueing and walking off.
+   */
+  priceSensitivity: number;
 }
 
 export interface GuestNavigationNetwork {
@@ -69,6 +86,8 @@ export interface ParkSimulationSaveState {
   litter: readonly LitterSnapshot[];
   nextGuestId: number;
   nextLitterId: number;
+  /** Player-set prices. Absent in saves written before pricing existed. */
+  prices?: PriceBook;
 }
 
 /**
@@ -119,6 +138,7 @@ export class ParkSimulation {
   private navigation: GuestNavigationNetwork | null = null;
   private configuredAppeal: number | null = null;
   private configuredUpkeep: number | null = null;
+  private prices: PriceBook = {};
   private stats: ParkStats = {
     cash: 4_200,
     reputation: 38,
@@ -176,6 +196,29 @@ export class ParkSimulation {
     this.configuredUpkeep = Math.max(0, upkeep);
   }
 
+  /** Sets what one kind of facility charges. Returns the price actually applied. */
+  setPrice(kind: PlaceableKind, price: number): number {
+    const book = sanitizePriceBook({ ...this.prices, [kind]: price });
+    this.prices = book;
+    const applied = priceFor(kind, book);
+    this.emit({ type: 'price-changed', kind, price: applied });
+    return applied;
+  }
+
+  getPrices(): Readonly<PriceBook> {
+    return this.prices;
+  }
+
+  /** What this kind charges a guest today. */
+  getPrice(kind: PlaceableKind): number {
+    return priceFor(kind, this.prices);
+  }
+
+  /** Share of guests currently willing to pay for this kind, 0 to 1. */
+  getAcceptanceRate(kind: PlaceableKind): number {
+    return acceptanceRate(kind, this.prices, this.stats.reputation);
+  }
+
   getStats(): Readonly<ParkStats> {
     return this.stats;
   }
@@ -221,6 +264,7 @@ export class ParkSimulation {
       litter: this.getLitter().map((item) => ({ ...item, position: { ...item.position } })),
       nextGuestId: this.nextGuestId,
       nextLitterId: this.nextLitterId,
+      prices: { ...this.prices },
     };
   }
 
@@ -260,6 +304,9 @@ export class ParkSimulation {
       });
     }
 
+    // A save written before pricing existed has no price book, which is the
+    // same thing as "everything charges the designed price".
+    this.prices = sanitizePriceBook(state.prices);
     this.nextGuestId = Math.max(1, Math.round(finiteOr(state.nextGuestId, 1)));
     this.nextLitterId = Math.max(1, Math.round(finiteOr(state.nextLitterId, 1)));
     this.spawnTimer = 1.25;
@@ -452,6 +499,7 @@ export class ParkSimulation {
       dwellTimer: 0,
       trashTimer: 0,
       targetNeed: null,
+      priceSensitivity: this.random.next(),
     };
     this.assignRoute(guest, ENTRY_POSITION);
     this.guests.set(id, guest);
@@ -462,10 +510,10 @@ export class ParkSimulation {
   private updateGuest(guest: GuestRuntime, dt: number): void {
     guest.lifetime += dt;
     guest.decisionTimer -= dt;
-    guest.needs.hunger = clamp01(guest.needs.hunger + dt * 0.0042);
-    guest.needs.fun = clamp01(guest.needs.fun + dt * 0.0036);
-    guest.needs.bladder = clamp01(guest.needs.bladder + dt * 0.0031);
-    guest.needs.rest = clamp01(guest.needs.rest + dt * 0.0022);
+    guest.needs.hunger = clamp01(guest.needs.hunger + dt * NEED_GROWTH_PER_SECOND.hunger);
+    guest.needs.fun = clamp01(guest.needs.fun + dt * NEED_GROWTH_PER_SECOND.fun);
+    guest.needs.bladder = clamp01(guest.needs.bladder + dt * NEED_GROWTH_PER_SECOND.bladder);
+    guest.needs.rest = clamp01(guest.needs.rest + dt * NEED_GROWTH_PER_SECOND.rest);
 
     const worstNeed = Math.max(
       guest.needs.hunger,
@@ -491,7 +539,7 @@ export class ParkSimulation {
       return;
     }
 
-    if (guest.lifetime > 155 || guest.happiness < 0.22) {
+    if (guest.lifetime > GUEST_LIFETIME_SECONDS || guest.happiness < 0.22) {
       this.startLeaving(guest);
       return;
     }
@@ -536,14 +584,20 @@ export class ParkSimulation {
     const needs: Array<[ServiceNeed, number]> = [
       ['bladder', guest.needs.bladder * 1.15],
       ['hunger', guest.needs.hunger],
-      ['fun', guest.needs.fun * 0.94],
+      ['fun', guest.needs.fun * FUN_PRIORITY_WEIGHT],
       ['rest', guest.needs.rest * 0.8],
     ];
     needs.sort((a, b) => b[1] - a[1]);
     const [need, urgency] = needs[0] ?? [null, 0];
 
-    if (need && urgency > 0.48 && this.seekFacility(guest, need)) return;
-    if (guest.needs.fun > 0.34 && this.random.next() < 0.38 && this.seekFacility(guest, 'fun')) return;
+    if (need && urgency > NEED_PRIORITY_THRESHOLD && this.seekFacility(guest, need)) return;
+    if (
+      guest.needs.fun > FUN_RECONSIDER_THRESHOLD &&
+      this.random.next() < 0.38 &&
+      this.seekFacility(guest, 'fun')
+    ) {
+      return;
+    }
     if (this.random.next() < 0.08 && this.seekFacility(guest, 'information')) return;
 
     guest.state = 'wandering';
@@ -553,8 +607,14 @@ export class ParkSimulation {
   private seekFacility(guest: GuestRuntime, need: ServiceNeed): boolean {
     const candidates = [...this.facilities.values()].filter((facility) => {
       const spec = getPlaceableSpec(facility.kind);
-      return facility.enabled && spec.serviceNeed === need;
+      if (!facility.enabled || spec.serviceNeed !== need) return false;
+      return this.willPay(guest, facility.kind);
     });
+    // A guest who refuses every price simply does not go, and the need they came
+    // in with keeps climbing. That is the whole cost of overcharging: unmet
+    // needs make guests unhappy, unhappy guests drag reputation down as they
+    // leave, and a lower reputation narrows what the park may charge next. The
+    // punishment for greed is not a rule anywhere — it is this loop closing.
     if (candidates.length === 0) return false;
 
     candidates.sort((a, b) => {
@@ -571,6 +631,15 @@ export class ParkSimulation {
     if (this.assignRoute(guest, this.approachPoint(target))) return true;
     this.clearTarget(guest);
     return false;
+  }
+
+  /**
+   * Whether this guest accepts what this kind of facility is charging. Free
+   * facilities are always accepted, so restrooms and bins never take part.
+   */
+  private willPay(guest: GuestRuntime, kind: PlaceableKind): boolean {
+    const accepted = acceptanceRate(kind, this.prices, this.stats.reputation);
+    return accepted >= 1 || guest.priceSensitivity < accepted;
   }
 
   private enqueueGuest(guest: GuestRuntime, facility: FacilityRuntime): void {
@@ -619,20 +688,29 @@ export class ParkSimulation {
     const spec = getPlaceableSpec(facility.kind);
     switch (spec.serviceNeed) {
       case 'hunger':
-        guest.needs.hunger = Math.max(0.04, guest.needs.hunger - 0.72);
+        guest.needs.hunger = Math.max(
+          NEED_FLOOR_AFTER_SERVICE.hunger,
+          guest.needs.hunger - NEED_RELIEF_PER_SERVICE.hunger,
+        );
         guest.needs.bladder = clamp01(guest.needs.bladder + 0.12);
         guest.carryingTrash = true;
         guest.trashTimer = this.random.range(9, 17);
         break;
       case 'fun':
-        guest.needs.fun = Math.max(0.03, guest.needs.fun - 0.82);
+        guest.needs.fun = Math.max(
+          NEED_FLOOR_AFTER_SERVICE.fun,
+          guest.needs.fun - NEED_RELIEF_PER_SERVICE.fun,
+        );
         guest.needs.rest = clamp01(guest.needs.rest + 0.09);
         break;
       case 'bladder':
-        guest.needs.bladder = 0.03;
+        guest.needs.bladder = NEED_FLOOR_AFTER_SERVICE.bladder;
         break;
       case 'rest':
-        guest.needs.rest = Math.max(0.02, guest.needs.rest - 0.6);
+        guest.needs.rest = Math.max(
+          NEED_FLOOR_AFTER_SERVICE.rest,
+          guest.needs.rest - NEED_RELIEF_PER_SERVICE.rest,
+        );
         break;
       case 'information':
         guest.happiness = clamp01(guest.happiness + 0.035);
@@ -655,17 +733,20 @@ export class ParkSimulation {
     this.routeToRandomDestination(guest);
     guest.decisionTimer = this.random.range(1.2, 2.8);
 
+    // The guest pays what the park is asking today, not what the spec sheet
+    // says. They already accepted this price before joining the queue.
+    const charged = priceFor(facility.kind, this.prices);
     this.stats = {
       ...this.stats,
-      cash: this.stats.cash + spec.revenue,
-      revenue: this.stats.revenue + spec.revenue,
+      cash: this.stats.cash + charged,
+      revenue: this.stats.revenue + charged,
       guestsServed: this.stats.guestsServed + 1,
     };
     this.emit({
       type: 'service-complete',
       guestId: guest.id,
       facilityId: facility.id,
-      revenue: spec.revenue,
+      revenue: charged,
     });
   }
 

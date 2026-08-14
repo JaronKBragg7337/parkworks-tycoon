@@ -3,6 +3,30 @@
 Working state as of 2026-08-14. Read this first if you are picking the project
 up cold.
 
+## Done since this file was last written
+
+All four items reported from play on 2026-08-14 are shipped. 134 tests pass.
+
+- **The ride bug is fixed**, and the constants can no longer drift: they moved
+  into [`src/core/needRates.ts`](../src/core/needRates.ts), which ParkSimulation
+  and awayReport both import. There is no second copy left to forget.
+- **Prices are a player lever**, gated by reputation, in a new "Park office" tab.
+- **Every facility shows what it charges** on its catalog card and in the
+  inspector.
+- **Start over** lives in the same tab behind two confirmations.
+
+**One correction to the diagnosis below.** It said guests "only ever ride one
+ride". Measured against the simulation over four seeds and 420 seconds, the old
+relief of 0.82 actually imposed a ceiling of **two** rides, and in a park with
+rides 30-45m apart it left **a third to a half of guests riding only once**
+(11-15 of ~34 departures per run). At 0.30 the same measurement gives 2.2-2.6
+rides per guest, a ceiling of three, and at most one single-ride guest per run;
+ride revenue rises 16-21%. Those runs walk in straight lines with no path
+network, so real play sits at or below them — which is why one ride is what it
+looked like from the ground. The bug and the cause were real; only the "always
+exactly one" wording was too strong. `tests/guestVisit.test.ts` pins this with
+thresholds that the old constant fails and the new one clears.
+
 ## Where things stand
 
 Live and green: <https://jaronkbragg7337.github.io/parkworks-tycoon/>
@@ -26,7 +50,7 @@ Shipped in the last two commits:
   light on the ground. Evening is deliberately brighter than physical accuracy,
   because the park has to stay readable to walk around in.
 
-110 tests pass.
+134 tests pass. `npm run check` is the gate.
 
 ## The direction
 
@@ -68,61 +92,79 @@ verified to check `auth.uid()` internally; `touch_updated_at` has a mutable
 search_path; `pg_net` sits in the public schema; leaked-password protection is a
 dashboard toggle only Jaron can flip.
 
-**Still to build:**
+**Built on 2026-08-14, in the heartbeat-observatory repo:**
 
-1. Shared `hb-supabase.js` at the HBO root — the URL and anon key are pasted
-   into 15+ files with no shared client. Parkworks must not become the 16th.
-2. Identity helper: anonymous device id plus session, reusing the pattern at
-   `games/syl/src/multiplayer/multiplayer.js:466`.
-3. `parkworks_saves` table and the `createSaveBackend` hook this game already
-   looks for. **The game needs no change** — the host page supplies it.
+1. **`hb-supabase.js` at the HBO root.** One client for the whole site, created
+   on first ask and stashed on `window` so a page loading it twice still gets
+   one auth session. The URL and publishable key were pasted into **27** files
+   (not 15) — all one project, one key. Those files are not migrated yet; the
+   shared module exists so nothing new has to copy them, and Parkworks did not
+   become the 28th.
+2. **Identity helper**, in the same file: `getIdentity()` returns the signed-in
+   Heartbeat account when there is one and the device otherwise, never throws,
+   and keeps the existing `hb_guest_id` key so nobody loses their identity.
+3. **`parkworks_saves` table**, applied and verified against the live database.
+   RLS on, four policies, all `auth.uid() = owner_id`. Verified from outside
+   with the anon key: reads return nothing and writes are refused. The host-side
+   backend is `games/parkworks/hb-save-backend.js`.
 
-## Reported from play on 2026-08-14
+**Blocker on item 3, needs Jaron.** Anonymous sign-ins are **disabled** on the
+project — probed directly, the endpoint returns `anonymous_provider_disabled`.
+So cloud saves work for signed-in Heartbeat players and guests fall back to this
+browser, which is what the game already did. Turning it on is a dashboard toggle
+only Jaron can flip (Authentication → Sign In / Providers → Anonymous). **No code
+changes when it flips**: the policies name the `authenticated` role, and an
+anonymous user is authenticated with `is_anonymous` set, so guests start getting
+cloud saves the moment the toggle moves.
 
-### 1. Guests only ever ride one ride — confirmed bug, already diagnosed
+**Still to do:** the Heartbeat copy of the game under `/games/parkworks/` is not
+vendored yet, so the save backend has nothing to attach to. The standalone Pages
+build is unaffected and remains the live one.
 
-Jaron noticed guests did not move on to a second ride. It is real, and it is
-arithmetic rather than pathfinding or rendering:
+## Reported from play on 2026-08-14 — all four shipped
 
-- `completeService` relieves `fun` by **0.82**, dropping a guest from ~0.85 to
-  the 0.03 floor. One ride almost completely satisfies them.
-- `fun` regrows at **0.0036/sec** (`updateGuest`).
-- `chooseGuestAction` needs `fun > 0.34` to even consider another ride (and then
-  only on a 38% roll), or `fun > 0.51` for it to become the top need.
-- That is **86 seconds** to reconsider and **134 seconds** to prioritise.
-- Guests leave at `lifetime > 155` seconds.
+### 1. Guests only ever ride one ride — fixed
 
-A guest who rides at t=30s cannot reconsider until t=116s, leaving 39 seconds to
-decide, walk, queue, and ride — when ride service alone is 12–20 seconds.
+`fun` relief dropped from 0.82 to 0.30. Both that constant and every other rate
+governing a visit now live once, in `src/core/needRates.ts`, which documents the
+arithmetic and the measured before/after. `awayReport` imports the same table
+rather than keeping a copy, so the offline projection cannot fall out of step
+with live play again. See the correction at the top of this file for what the
+measurement actually showed.
 
-**Suggested fix:** drop the fun relief from 0.82 to about **0.30**, leaving a
-guest around 0.20 after a ride and wanting another in roughly 40 seconds, which
-fits several rides into one visit. Prefer this over lengthening the visit.
+### 2. A "start over" button — shipped
 
-**Do not change it in one place.** `src/core/awayReport.ts` mirrors these
-constants in `NEED_RELIEF_PER_SERVICE` so offline earnings match live rates; the
-two must move together, and `tests/awayReport.test.ts` covers the relationship.
+In the **Park office** tab of the build panel, behind two confirmations. The
+first names the park's day, cash, and building count; the second says plainly
+that it cannot be undone. The saved copy is cleared before the page reloads, so
+a reload caught in the middle cannot resurrect the park.
 
-### 2. A "start over" button
+### 3. Show what each facility charges per guest — shipped
 
-Players need a way to abandon a park and begin again. It must **double-confirm**
-— a mispress that silently destroys a park people have invested hours in is the
-worst possible outcome. The splash already has "Start a new park" for the resume
-path (`discardSavedPark`); this is the equivalent for a park already in play.
+On the catalog card ("Earns $34 per guest" / "Free for guests") and in the
+building inspector. Both read the live price, not the spec sheet, so they follow
+whatever the player has set.
 
-### 3. Show what each facility charges per guest
+### 4. Let players set prices, with demand gated by reputation — shipped
 
-Every spec already carries `revenue`. Surface it on the build catalog card and
-in the building inspector, so the player can see what a place earns per visit
-before and after building it.
+The Park office tab. `src/core/pricing.ts` holds the whole rule as pure
+functions, so the preview the player sees is computed by the code that will
+charge their guests.
 
-### 4. Let players set prices, with demand gated by reputation
-
-Jaron's favourite of the four, and the one that carries the late game: raise a
-price and guests weigh it against the park's reputation, so a well-run park can
-charge more and a bad one cannot. This is the "bigger boss" lever that makes a
-large park feel different from a small one, and it pairs directly with the guest
-wallets below — a guest needs money before a price can matter.
+- Reputation buys tolerance: **0.75x** the standard price at reputation 0,
+  **1.0x** at 20, **2.0x** at 100. Past tolerance, willingness falls to zero
+  over a further 0.5x, so one dollar too far costs a few customers rather than
+  all of them.
+- Each guest draws a price sensitivity once at the gate, so a guest who refused
+  a price keeps refusing it instead of flickering.
+- The panel shows the earned-per-guest figure, which is not the same as the
+  price: at reputation 38 a $34 burger raised to $52 earns **$20**. The player
+  can see they have overshot without having to run the experiment.
+- Nothing punishes greed directly. Guests who refuse every price simply do not
+  go, their needs keep climbing, they leave unhappy, reputation falls, and
+  tolerance narrows. The loop closes on its own.
+- Free facilities stay free. Restrooms, bins, benches, and information have no
+  price and take no part.
 
 ## Then, on the game
 

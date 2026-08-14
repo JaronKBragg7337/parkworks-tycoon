@@ -456,6 +456,44 @@ kbd { padding: 2px 5px; color: var(--ink); border: 1px solid var(--line); border
 .away-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .away-card .primary-action { justify-content: center; }
 
+/* Start-over confirmation. Deliberately not styled like anything the player
+   presses in ordinary play: the destructive button is coral, and "keep my park"
+   is the wider, calmer target on the left. */
+.confirm-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.confirm-actions .secondary-action,
+.confirm-actions .primary-action { justify-content: center; }
+.primary-action.is-danger,
+.ghost-action.is-danger { color: #22090a; background: var(--coral); border-color: transparent; }
+.primary-action.is-danger:hover,
+.ghost-action.is-danger:hover { background: #ff8f81; color: #22090a; }
+
+/* Park office: pricing */
+.catalog-grid.is-office { display: block; }
+.catalog-earns { display: block; margin-top: 4px; color: var(--amber); font-size: 9px; font-weight: 700; }
+.catalog-earns.is-free { color: var(--muted); font-weight: 400; }
+.inspector-charge { display: block; margin-top: 3px; color: var(--amber); font-size: 10px; font-weight: 700; }
+.inspector-charge.is-free { color: var(--muted); font-weight: 400; }
+.price-list { display: grid; gap: 7px; }
+.price-row { padding: 10px 12px; border: 1px solid var(--line); border-radius: 13px; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 10px; background: rgb(255 255 255 / 3%); }
+.price-row .catalog-copy { padding-right: 0; }
+.price-row .placement-validity { margin-top: 3px; font-size: 9px; }
+.price-stepper { display: flex; align-items: center; gap: 6px; }
+.price-stepper strong { min-width: 52px; color: var(--amber); text-align: center; font: 800 14px 'Segoe UI Variable Display', 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; }
+/* 44px, matching every other tap target in the game. A price stepper gets
+   pressed repeatedly on a phone, so it is the last place to shave a few pixels. */
+.price-stepper button { width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background: rgb(255 255 255 / 5%); cursor: pointer; font: 700 18px/1 system-ui; }
+.price-stepper button:hover:not(:disabled) { border-color: rgb(112 227 179 / 45%); background: rgb(112 227 179 / 10%); }
+.price-stepper button:disabled { opacity: .35; cursor: default; }
+.danger-section .catalog-section-heading h3 { color: var(--coral); }
+
+@media (max-width: 720px) {
+  .price-row { grid-template-columns: 34px minmax(0, 1fr); grid-template-areas: 'icon copy' 'stepper stepper'; }
+  .price-row .catalog-icon { grid-area: icon; width: 34px; height: 34px; }
+  .price-row .catalog-copy { grid-area: copy; }
+  .price-stepper { grid-area: stepper; justify-content: space-between; }
+  .price-stepper button { flex: 0 0 auto; }
+}
+
 @media (pointer: coarse) {
   .desktop-hint { display: none; }
   .touch-hint { display: inline; }
