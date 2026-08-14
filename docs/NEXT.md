@@ -135,13 +135,12 @@ only for a signed-in, non-anonymous user. Checked against all four JWT shapes:
 real users can still post, anonymous and signed-out cannot. `parkworks_saves` is
 deliberately left open to anonymous owners — that is the whole point of it.
 
-**Separate, pre-existing, needs a decision.** `public.placements` allows INSERT,
-UPDATE, and DELETE to the `public` role with the single condition
-`world = 'printer-lab'` and **no auth check at all**. Anyone holding the anon key
-can already write there and could before this change — confirmed by inserting
-with only the anon key and no session, which RLS permitted (it failed on a
-NOT NULL column, not on a policy). If printer-lab is meant to be an open
-sandbox this is fine; if not, it wants an owner column. Untouched either way.
+**`public.placements` is open on purpose — do not harden it.** It allows INSERT,
+UPDATE and DELETE to the `public` role on `world = 'printer-lab'` with no auth
+check, so anyone with the anon key can write there. That is deliberate: a working
+3D printer inside a Three.js world is the point, and the more people who can
+touch it the better. Jaron is aiming it at the Three.js audience on X. Raised
+with him on 2026-08-14 and confirmed as intended. Leave it alone.
 
 Supabase also recommends a CAPTCHA on anonymous sign-ins to stop the user table
 being inflated. Not enabled — worth doing if the MAU count ever starts climbing
