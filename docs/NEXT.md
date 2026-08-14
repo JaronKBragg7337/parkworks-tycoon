@@ -43,26 +43,39 @@ Two things already point at this and should not be broken:
 - A save is a **self-contained portable document**. A chain is a list of them.
   No save-format change is needed to get there.
 
-## Heartbeat Observatory / Supabase — do this first
+## Heartbeat Observatory / Supabase
 
-HBO's Supabase project is live and already handles auth sessions and realtime
-presence. No game has ever written *state* to it.
+Audited against the live database on 2026-08-14, with Jaron's go-ahead.
 
-Measured: the Supabase URL and anon key are copy-pasted into **15+ files** with
-no shared client module. An anonymous device-id fallback already exists in
-`games/syl/src/multiplayer/multiplayer.js` around line 466.
+**Correction to what this file said before:** RLS was *not* unapplied. That
+claim came from reading commented-out lines in `supabase/world3-shared-town-v0.sql`
+rather than from the database. All 40 public tables have RLS enabled, world3
+included. Enabling RLS was never the outstanding task.
 
-1. Shared `hb-supabase.js` at the HBO root — one client, imported everywhere.
-2. Identity helper: anonymous device id plus session, reusing the SYL pattern.
+**Fixed:** `public.assign_apartment()` was SECURITY DEFINER, took no arguments,
+checked nothing, and was callable at `/rest/v1/rpc/assign_apartment` with the
+public anon key. When every apartment is full it inserts a new row and returns
+it, so anyone could grow `public.apartments` without bound. EXECUTE revoked from
+`PUBLIC` (revoking from `anon` alone does nothing — Postgres grants function
+EXECUTE to PUBLIC by default), granted back to `service_role`. The
+`create_world_character()` trigger function was closed off the same way. Both
+advisor lints cleared.
+
+**Still open, none urgent:** six tables have RLS on with zero policies so only
+`service_role` can read them — safe, but check whether any page expects data
+from them; ~22 other SECURITY DEFINER functions stay callable but were each
+verified to check `auth.uid()` internally; `touch_updated_at` has a mutable
+search_path; `pg_net` sits in the public schema; leaked-password protection is a
+dashboard toggle only Jaron can flip.
+
+**Still to build:**
+
+1. Shared `hb-supabase.js` at the HBO root — the URL and anon key are pasted
+   into 15+ files with no shared client. Parkworks must not become the 16th.
+2. Identity helper: anonymous device id plus session, reusing the pattern at
+   `games/syl/src/multiplayer/multiplayer.js:466`.
 3. `parkworks_saves` table and the `createSaveBackend` hook this game already
    looks for. **The game needs no change** — the host page supplies it.
-4. Enable RLS, including the policies still commented out in
-   `supabase/world3-shared-town-v0.sql`.
-5. Audit what the public anon key currently exposes.
-
-**Items 4 and 5 touch the live database and existing world3 data. Show Jaron
-exactly what a migration or policy change does and get an explicit yes before
-applying it.** Nothing has been approved against the running project yet.
 
 ## Reported from play on 2026-08-14
 
