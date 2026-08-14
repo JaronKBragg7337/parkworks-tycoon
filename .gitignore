@@ -6,3 +6,6 @@ coverage/
 *.tsbuildinfo
 .DS_Store
 Thumbs.db
+
+# Agent worktrees are created in here and are separate git repos.
+.claude/worktrees/
