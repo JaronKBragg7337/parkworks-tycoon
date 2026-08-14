@@ -76,6 +76,14 @@ export interface AwayNeedCapacity {
 }
 
 export interface AwayParkProfile {
+  /**
+   * What one guest arrives carrying. Offline earnings are capped by the money
+   * that walked through the gate, exactly as they are on screen — otherwise a
+   * park left at triple prices would mint revenue overnight that the same park
+   * could never take while anyone was watching. Omitted means unlimited, which
+   * is how the projection behaved before wallets existed.
+   */
+  walletPerGuest?: number;
   /** Total appeal of connected buildings — drives the guest population cap. */
   appeal: number;
   /** Total upkeep charged every UPKEEP_INTERVAL_SECONDS. */
@@ -172,6 +180,23 @@ export function computeAwayProgress(
     if (need === 'hunger') hungerServices = services;
   }
 
+  // Guests cannot spend what they did not bring. Departures over the credited
+  // window set how many wallets came through the gate, and that total is the
+  // ceiling on takings no matter how much throughput the park has.
+  const departuresForSpending = (population * creditedSeconds) / GUEST_LIFETIME_SECONDS;
+  const wallet = profile.walletPerGuest;
+  if (typeof wallet === 'number' && Number.isFinite(wallet) && wallet >= 0) {
+    const moneyAvailable = departuresForSpending * wallet;
+    if (revenue > moneyAvailable) {
+      // Scale the served count with the revenue, so the report does not claim
+      // more completed services than the money could actually have paid for.
+      const affordableShare = moneyAvailable / revenue;
+      servicesTotal *= affordableShare;
+      hungerServices *= affordableShare;
+      revenue = moneyAvailable;
+    }
+  }
+
   const upkeep = (creditedSeconds / UPKEEP_INTERVAL_SECONDS) * profile.upkeepPerCycle;
 
   // Each food service hands a guest a wrapper. Guests only look for a bin
@@ -183,7 +208,7 @@ export function computeAwayProgress(
   const litterCreated = Math.max(0, Math.round(hungerServices * (1 - coverage)));
   const cleanliness = clamp01(1 - (litterCount + litterCreated) * CLEANLINESS_LOST_PER_LITTER);
 
-  const departures = (population * creditedSeconds) / GUEST_LIFETIME_SECONDS;
+  const departures = departuresForSpending;
   // A guest leaves happy when the park could actually serve them and was clean.
   const satisfaction = demandTotal > 0 ? clamp01(metTotal / demandTotal) : 1;
   const expectedHappiness = Math.min(

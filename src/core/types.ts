@@ -109,6 +109,12 @@ export interface GuestSnapshot {
   carryingTrash: boolean;
   paletteIndex: number;
   ageScale: number;
+  /**
+   * Money this guest still has. They arrive with a wallet sized by the park's
+   * reputation and spend it down; when it runs out they stop buying, which is
+   * what stops a price rise from being free money.
+   */
+  wallet: number;
 }
 
 export interface LitterSnapshot {

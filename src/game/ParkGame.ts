@@ -38,6 +38,7 @@ import {
   type ParkSaveDocument,
 } from '../core/saveGame';
 import { resolveSaveBackend, type SaveBackend } from '../core/SaveStore';
+import { typicalWallet } from '../core/pricing';
 import type { FacilitySnapshot, GuestSnapshot, LitterSnapshot, PlacedObject, PlaceableKind } from '../core/types';
 import { InputController } from '../controls/InputController';
 import { cameraRelativeMovement } from '../controls/movementMath';
@@ -763,6 +764,7 @@ export class ParkGame {
    */
   private buildAwayProfile(): AwayParkProfile {
     const profile = createEmptyAwayProfile();
+    profile.walletPerGuest = typicalWallet(this.simulation.getStats().reputation);
     const revenueWeighted: Record<ServicedNeed, number> = { hunger: 0, fun: 0, bladder: 0, rest: 0 };
     const acceptanceWeighted: Record<ServicedNeed, number> = { hunger: 0, fun: 0, bladder: 0, rest: 0 };
 

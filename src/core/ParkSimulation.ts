@@ -8,7 +8,13 @@ import {
   NEED_PRIORITY_THRESHOLD,
   NEED_RELIEF_PER_SERVICE,
 } from './needRates';
-import { acceptanceRate, priceFor, sanitizePriceBook, type PriceBook } from './pricing';
+import {
+  acceptanceRate,
+  priceFor,
+  sanitizePriceBook,
+  startingWallet,
+  type PriceBook,
+} from './pricing';
 import { SeededRandom } from './random';
 import type {
   FacilitySnapshot,
@@ -500,6 +506,7 @@ export class ParkSimulation {
       trashTimer: 0,
       targetNeed: null,
       priceSensitivity: this.random.next(),
+      wallet: startingWallet(this.stats.reputation, this.random.next()),
     };
     this.assignRoute(guest, ENTRY_POSITION);
     this.guests.set(id, guest);
@@ -634,10 +641,18 @@ export class ParkSimulation {
   }
 
   /**
-   * Whether this guest accepts what this kind of facility is charging. Free
-   * facilities are always accepted, so restrooms and bins never take part.
+   * Whether this guest both accepts and can afford what this facility charges.
+   *
+   * Willingness and means are separate refusals and the order matters: someone
+   * who thinks a price is fair still cannot pay it with an empty wallet, and
+   * that is the case that makes money worth managing. Free facilities pass both
+   * tests, so restrooms and bins are always available no matter how broke a
+   * guest is — a park should never trap someone who needs a toilet.
    */
   private willPay(guest: GuestRuntime, kind: PlaceableKind): boolean {
+    const price = priceFor(kind, this.prices);
+    if (price <= 0) return true;
+    if (price > guest.wallet) return false;
     const accepted = acceptanceRate(kind, this.prices, this.stats.reputation);
     return accepted >= 1 || guest.priceSensitivity < accepted;
   }
@@ -734,8 +749,13 @@ export class ParkSimulation {
     guest.decisionTimer = this.random.range(1.2, 2.8);
 
     // The guest pays what the park is asking today, not what the spec sheet
-    // says. They already accepted this price before joining the queue.
-    const charged = priceFor(facility.kind, this.prices);
+    // says. They already accepted this price and had the money before joining
+    // the queue, but a price rise while they queued could have outrun the
+    // wallet, so the park takes what is actually there rather than pushing a
+    // guest into debt the game has no concept of.
+    const asking = priceFor(facility.kind, this.prices);
+    const charged = Math.min(asking, Math.max(0, guest.wallet));
+    guest.wallet = Math.max(0, guest.wallet - charged);
     this.stats = {
       ...this.stats,
       cash: this.stats.cash + charged,

@@ -19,6 +19,77 @@ import type { PlaceableKind } from './types';
 /** Prices the player has set, by kind. Anything absent charges the spec's price. */
 export type PriceBook = Partial<Record<PlaceableKind, number>>;
 
+/**
+ * What a guest arrives carrying.
+ *
+ * A price means nothing until the guest can run out of money — that is the whole
+ * reason wallets exist. But the wallet must not become the thing that limits an
+ * ordinary visit, or it quietly undoes the ride fix in `needRates.ts` by a
+ * different route: a guest who cannot afford a second ride looks exactly like a
+ * guest who does not want one.
+ *
+ * These bounds were measured, not guessed. Over four seeds and 420 seconds on a
+ * park with rides 30-45m apart:
+ *
+ *   - At standard prices, guests take **2.29 rides** each and almost nobody
+ *     manages only one. That matches the 2.31 the park produced before wallets
+ *     existed, which is the point: at the designed prices, money is not what is
+ *     stopping anyone.
+ *   - Raise every price 15% and takings go **up** ($4,431 to $4,986) while rides
+ *     barely move. A park that has earned the right to charge more is paid for
+ *     it.
+ *   - Raise them 50% and takings **collapse** to $2,790, with rides down to
+ *     1.86. Guests run dry, and the ones who do not simply refuse.
+ *
+ * An earlier range of 55-175 was rejected: it held guests to 1.98 rides at
+ * standard prices, so the wallet was doing damage before the player had made a
+ * single decision.
+ */
+const WALLET_MIN = 90;
+const WALLET_MAX = 240;
+
+/**
+ * A park people rate is a park people come to spend at. This tilts the crowd's
+ * money by up to a quarter either side of the base range, so reputation pays
+ * twice: it widens what the park may charge, and it thickens the wallets it is
+ * charging. That is the compounding a big park should feel and a small one
+ * should not.
+ */
+const WALLET_REPUTATION_SWING = 0.25;
+
+/**
+ * How much a guest draws when they top up, as a multiple of the base wallet.
+ * Generous on purpose: a guest who queues at a cash machine should be set up for
+ * the rest of their visit, not back in the queue two minutes later.
+ */
+export const WITHDRAWAL_MULTIPLE = 0.9;
+
+/**
+ * Below this share of a full wallet a guest starts thinking about a top-up.
+ * Set so they go looking while they can still afford something, rather than
+ * after they are already stranded.
+ */
+export const TOP_UP_THRESHOLD = 0.28;
+
+/**
+ * The money one guest walks in with, given the park's standing.
+ * `roll` is a 0-1 sample, kept as a parameter so the simulation's seeded
+ * generator stays the only source of randomness and this stays pure.
+ */
+export function startingWallet(reputation: number, roll: number): number {
+  const rating = Math.max(0, Math.min(100, Number.isFinite(reputation) ? reputation : 0)) / 100;
+  const sample = Math.max(0, Math.min(1, Number.isFinite(roll) ? roll : 0.5));
+  const base = WALLET_MIN + (WALLET_MAX - WALLET_MIN) * sample;
+  // Reputation 0 pays 0.75x, 50 pays 1x, 100 pays 1.25x.
+  const standing = 1 + (rating - 0.5) * 2 * WALLET_REPUTATION_SWING;
+  return Math.round(base * standing);
+}
+
+/** A full wallet at this reputation, used to judge when a guest is running low. */
+export function typicalWallet(reputation: number): number {
+  return startingWallet(reputation, 0.5);
+}
+
 /** Nobody may charge more than this multiple of a facility's designed price. */
 export const MAX_PRICE_MULTIPLE = 3;
 
