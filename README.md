@@ -64,6 +64,12 @@ and compressed ambientCG CC0 texture maps for grass, paving, concrete, timber,
 and bark. Full sources and transformations are in
 [ASSET_PROVENANCE.md](ASSET_PROVENANCE.md).
 
+## What is next
+
+[docs/NEXT.md](docs/NEXT.md) carries the working state: what has shipped, the
+direction, the Heartbeat Observatory and Supabase steps to take first, and the
+known gaps. Read it before picking the project up cold.
+
 ## Local development
 
 Requirements: Node.js 24+ (or Bun) and npm.
