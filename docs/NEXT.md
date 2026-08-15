@@ -1,83 +1,81 @@
 # Still needed
 
-Working state as of 2026-08-14. Read this first if you are picking the project
+Working state as of 2026-08-15. Read this first if you are picking the project
 up cold.
 
-## Handoff, 2026-08-14 evening
+## Handoff, 2026-08-15
 
-Everything below is committed and pushed to `main`; Pages is green. **180 tests
-pass, `npm run check` is the gate.** Nothing is half-finished — the next person
-can start anywhere.
+Everything is committed and pushed to `main`; Pages is green and the Heartbeat
+copy is current. **209 tests pass, `npm run check` is the gate.** Nothing is
+half-finished.
 
-**Shipped today:** the ride bug fixed and its constants unified in
-`needRates.ts`; pricing gated by reputation with a Park office tab; start-over
-behind two confirmations; per-guest charges shown on cards and in the inspector;
-**guest wallets**; the **cash machine** that tops them up; **six new placeables**
-and a **scenery appeal radius**; Parkworks vendored into Heartbeat Observatory at
-`/games/parkworks/` with cloud saves; a shared `hb-supabase.js`; anonymous
-sign-ins enabled with public content guarded behind `is_real_account()`.
+### What the game is now
+
+Guests arrive with money and spend it down. You set the price of everything that
+charges, and reputation decides what you can get away with — 0.75x standard at
+nothing, 2.0x at a hundred, with refusals ramping in between. Push too far and
+guests walk past the queue, which lowers reputation, which lowers what you can
+charge. A cash machine lets them top up for a fee.
+
+The park trades 9:00 to 21:00 (7 minutes 30 of real time), then the gates shut,
+the crowd files out, night runs fast (1 minute 30), and dawn brings a settlement:
+a fixed subsidy, a reputation share, and a cut of the day's takings. Twenty-two
+placeables across rides, food, facilities and decor. Decoration has an appeal
+radius, so where you put it matters. A Cleaning Crew post employs a janitor who
+walks the paths picking up litter, including overnight.
 
 ### The next three, in order
 
-1. **End-of-day report.** Not started. Gives the day counter meaning and a
-   natural autosave beat, and it is the moment to revisit the 3.4-minute park
-   day. It should report what wallets produced: takings, guests served, and how
-   many left without spending.
-2. **Staff** — the janitor is done; the mechanic and the entertainer are not.
-   The **Cleaning Crew** post ($620, upkeep 22) is a `facilities` placeable that
-   employs one janitor per hut. Staff are derived from buildings rather than
-   owned, so nothing in the save format had to learn what a janitor is — a park
-   reloads with its crew standing at their posts. Janitors walk the same
-   `GuestNavigationNetwork` guests do, at 2.2 m/s, and only pick up litter
-   within 1.6 m of where they are actually standing.
-
-   Measured on a park with 18 buildings and no bins at all, cleanliness
-   averaged over the second half of a 1,200-second run across six seeds:
-   **0 janitors 0%, one 61%, two 76%**. Past two it plateaus, and not because
-   the crew runs out of capacity — about 3% of litter lands more than 1.45 m
-   from any path cell (`pushOutOfBuildings` shoving a wrapper to a building's
-   wall) and a janitor on the paths cannot reach it. That is the ceiling. The
-   player still can, by cutting across the grass. On a three-building starter
-   park one janitor takes the same measurement from 0% to 96%: small parks are
-   solved by one hire, large ones are not.
-
-   **What is deliberately missing:** janitors do nothing in the away report.
-   `computeAwayProgress` currently projects litter created and nothing that
-   removes it, so a park left overnight comes back as dirty as if it had no
-   crew — while still paying their wages through `upkeepPerCycle`. Fixing it
-   means giving the projection a collection rate per janitor and netting it
-   against `litterCreated`; the live rate to calibrate against is roughly
-   0.15 pieces per second per janitor when there is a backlog to work through,
-   falling as the park gets clean.
+1. **End-of-day report.** Still not started, and now the obvious next thing —
+   the day already has a real end and a settlement to hang it on. It should
+   report what wallets produced: takings, guests served, how many left without
+   spending, and what the crew cleared.
+2. **The rest of the staff** — mechanic and entertainer. The janitor established
+   the shape: `PlaceableSpec.staff?: StaffRole`, one worker per post, derived
+   from buildings rather than persisted, walking through the shared `Walker`
+   movement code. A mechanic wants ride breakdowns to exist first.
 3. **Multi-park chain layer.** `computeAwayProgress` already models a park
    running unwatched, which is most of what "park A while you stand in park B"
    needs.
 
-### Two things worth knowing before you touch the economy
+### Two decisions waiting on Jaron
 
-- **The wallet range in `pricing.ts` is load-bearing and was measured, not
-  chosen.** At 55-175 it silently undid the ride fix, because a guest who cannot
-  afford a second ride is indistinguishable from one who does not want one. If
-  you change `WALLET_MIN`/`WALLET_MAX`, re-measure rides per guest at standard
-  prices; it must stay near 2.3.
-- **A too-expensive park is not the same as a well-priced one.** Past about
-  1.7x, acceptance hits zero, nobody buys, and every downstream behaviour
-  (wallet drain, cash machine use, litter) goes quiet. Test economy changes
-  somewhere between 1.0x and 1.5x, not at 3x.
+- **After-dark activities.** He raised the idea that night could have its own
+  attractions drawing a different crowd, rather than the park simply being shut.
+  Deliberately not built: which guests, what draws them, and whether it competes
+  with the day is a design call, not a bug.
+- **`mini-railway` needs 120 m²**, the largest footprint of any ride but the
+  coaster, despite being the cheapest at $1,150. Either shrink the circuit or
+  keep it as a deliberate prompt to buy land.
 
-### Known, unfixed, newly noticed
+### Traps that have already cost time
 
-- **`mini-railway` needs 120 m², the largest footprint of any ride except the
-  coaster — despite being the cheapest at $1,150.** It is meant to be the
-  affordable early ride, but the starter parcel probably cannot hold it, so the
-  cheapest ride may be unbuildable until the player buys land. Either shrink the
-  circuit or accept it as a land-expansion prompt, deliberately.
-- The favicon is now inlined in `index.html` as an SVG data URI, so the built
-  copy carries it. Heartbeat's copy needs a rebuild to pick it up.
-- Cloud saves are verified only **signed out** (local fallback). The signed-in
-  path — a real row in `parkworks_saves`, resuming on another device — has never
-  been exercised.
-- The bullets under "Known and unfixed" further down still stand.
+- **The wallet range in `pricing.ts` is load-bearing and was measured.** At
+  55-175 it silently undid the ride fix, because a guest who cannot afford a
+  second ride is indistinguishable from one who does not want one. Change
+  `WALLET_MIN`/`WALLET_MAX` and re-measure rides per guest at standard prices;
+  it must stay near 2.3.
+- **Do not test economy changes at 3x prices.** Past about 1.7x acceptance hits
+  zero, nobody buys anything, and every downstream behaviour goes quiet — wallet
+  drain, cash machine use, litter. Working features look broken. Test between
+  1.0x and 1.5x.
+- **A passing test is not a look.** Night shipped too dark with its own test
+  green, because the test asked for an absolute ambient floor while the ground
+  was invisible on screen. Run it and look at it.
+- **A backgrounded browser tab throttles `requestAnimationFrame` to a
+  standstill**, so the clock never advances and nothing renders live. Use
+  `window.__parkworks.setClock(hour, minute)` in dev rather than waiting.
+- **Agent worktrees live in `.claude/worktrees` inside the repo.** They are
+  gitignored and excluded from vitest; if either lapses, `npm run check` silently
+  runs another branch's tests.
+
+### Verified, and not
+
+- Cloud saves are verified **signed out** only, where the local fallback engages
+  correctly. The signed-in path — a real row in `parkworks_saves`, resuming on
+  another device — has still never been exercised. It is the last untested link.
+- Nothing has been checked at a true mobile viewport. `resize_window` reports
+  success on this machine and the window stays desktop-sized.
 
 ## Done since this file was last written
 
