@@ -11,7 +11,6 @@ export type IconName = PlaceableIcon
   | 'camera'
   | 'follow'
   | 'reframe'
-  | 'broom'
   | 'nudge'
   | 'spark';
 

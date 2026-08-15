@@ -471,6 +471,8 @@ kbd { padding: 2px 5px; color: var(--ink); border: 1px solid var(--line); border
 .catalog-grid.is-office { display: block; }
 .catalog-earns { display: block; margin-top: 4px; color: var(--amber); font-size: 9px; font-weight: 700; }
 .catalog-earns.is-free { color: var(--muted); font-weight: 400; }
+/* A wage is money leaving, and reads in the colour the game uses for that. */
+.catalog-earns.is-wage { color: var(--coral); }
 .inspector-charge { display: block; margin-top: 3px; color: var(--amber); font-size: 10px; font-weight: 700; }
 .inspector-charge.is-free { color: var(--muted); font-weight: 400; }
 .price-list { display: grid; gap: 7px; }
