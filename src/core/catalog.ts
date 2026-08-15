@@ -1,4 +1,4 @@
-import type { PlaceableCategory, PlaceableKind, PlaceableSpec } from './types';
+import type { PlaceableCategory, PlaceableKind, PlaceableSpec, StaffRole } from './types';
 
 const SPECS: PlaceableSpec[] = [
   {
@@ -242,6 +242,37 @@ const SPECS: PlaceableSpec[] = [
     appeal: 2,
   },
   {
+    kind: 'maintenance-hut',
+    name: 'Warden Yard Crew Post',
+    shortName: 'Cleaning Crew',
+    category: 'facilities',
+    icon: 'broom',
+    description: 'A crew hut with lockers, a tool rack, and a barrow. Employs one janitor, who walks the park picking up litter wherever it falls.',
+    cost: 620,
+    // Cheap to put up and expensive to keep, which is what separates a wage
+    // from maintenance and is the whole point of buying one.
+    //
+    // The hut is the cheapest working building in the park bar the bin and the
+    // cash machine, deliberately: the answer to a park drowning in litter has
+    // to be affordable at the moment the player notices, or they just watch it
+    // rot. Then it costs 22 every 45 seconds forever — about $100 a park day,
+    // more than the carousel, more than anything else in Facilities by a factor
+    // of two, and 61% on top of the entire upkeep bill of a three-building
+    // starter park. A janitor costs more to keep than a ride does. That is not
+    // a mistake in the numbers; it is what a person on the payroll is.
+    upkeep: 22,
+    footprint: [4, 3],
+    serviceNeed: null,
+    capacity: 0,
+    serviceSeconds: 0,
+    revenue: 0,
+    // A yard, not an attraction. Small and positive because a park with a
+    // visible works crew reads as a park somebody is looking after, and zero
+    // would be the only zero in the catalog.
+    appeal: 2,
+    staff: 'janitor',
+  },
+  {
     kind: 'trash-bin',
     name: 'Sorting Bin',
     shortName: 'Bin',
@@ -356,6 +387,23 @@ export const CATEGORY_LABELS: Record<PlaceableCategory, string> = {
   facilities: 'Facilities',
   decor: 'Park details',
 };
+
+export const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
+  janitor: 'janitor',
+};
+
+/**
+ * Whether this building has to reach the path network before it does anything.
+ *
+ * Serving a guest obviously requires it. So does employing somebody, because a
+ * worker walks out of the front door onto the same paths the guests use, and a
+ * crew post fenced off behind a hedge would otherwise quietly pay a wage for
+ * nothing. A tree needs no such connection, which is why this is a question
+ * rather than a blanket rule.
+ */
+export function requiresPathAccess(spec: PlaceableSpec): boolean {
+  return spec.serviceNeed !== null || spec.staff !== undefined;
+}
 
 export function getPlaceableSpec(kind: PlaceableKind): PlaceableSpec {
   const spec = SPEC_BY_KIND.get(kind);

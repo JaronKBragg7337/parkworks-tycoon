@@ -1,4 +1,4 @@
-import { Box3, BufferGeometry, Mesh, Vector3 } from 'three';
+import { Box3, BufferGeometry, Mesh, Object3D, Vector3 } from 'three';
 import { afterAll, describe, expect, it } from 'vitest';
 import { PLACEABLE_SPECS } from '../src/core/catalog';
 import { AssetFactory } from '../src/world/AssetFactory';
@@ -73,6 +73,7 @@ describe('procedural placeable assets', () => {
     'first-aid',
     'information-booth',
     'cash-machine',
+    'maintenance-hut',
   ] as const)(
     '%s exposes secondary and tertiary construction layers',
     (kind) => {
@@ -164,6 +165,64 @@ describe('procedural placeable assets', () => {
       expect(triangles).toBeLessThan(125_000);
     }
     mobileFactory.dispose();
+  });
+
+  it('kits the crew post out as somewhere people work from', () => {
+    const report = inspectAsset('maintenance-hut');
+    // The bay is open and the tools are on the wall; a closed box would read as
+    // storage rather than as staff.
+    for (const part of ['barrow', 'broom', 'shutter', 'bin', 'bollard']) {
+      expect(report.names.some((name) => name.includes(part))).toBe(true);
+    }
+    // Nothing overhangs land the placement rules say the hut does not occupy.
+    expect(report.bounds.min.x).toBeGreaterThanOrEqual(-2.05);
+    expect(report.bounds.max.x).toBeLessThanOrEqual(2.05);
+    expect(report.bounds.min.z).toBeGreaterThanOrEqual(-1.55);
+    expect(report.bounds.max.z).toBeLessThanOrEqual(1.55);
+  });
+
+  /**
+   * The whole job of the janitor's silhouette is being told apart from a guest
+   * at phone scale, so the test is about difference rather than detail: staff
+   * kit no guest has, and a body wider through the chest than any guest's.
+   */
+  it('gives the janitor a silhouette no guest shares', () => {
+    const janitor = factory.createJanitor(0);
+    janitor.updateMatrixWorld(true);
+    const guest = factory.createGuest(0);
+    guest.updateMatrixWorld(true);
+
+    const names = (object: Object3D): string[] => {
+      const collected: string[] = [];
+      object.traverse((child) => collected.push(child.name.toLowerCase()));
+      return collected;
+    };
+    const janitorNames = names(janitor);
+    for (const part of ['over vest', 'hard hat shell', 'litter picker tool', 'retroreflective']) {
+      expect(janitorNames.some((name) => name.includes(part))).toBe(true);
+    }
+    expect(names(guest).some((name) => name.includes('vest'))).toBe(false);
+
+    const widthOf = (object: Object3D, part: string): number => {
+      const mesh = object.getObjectByName(part);
+      expect(mesh, part).toBeDefined();
+      return new Box3().setFromObject(mesh!).getSize(new Vector3()).x;
+    };
+    // The chest block is the thing that survives being four pixels wide, so the
+    // vest has to be broader than the shirt it goes over rather than a decal on
+    // top of it.
+    expect(widthOf(janitor, 'high visibility over vest')).toBeGreaterThan(
+      widthOf(guest, 'seamed torso garment'),
+    );
+
+    // Still a person standing on the ground, not one floating over it or sunk
+    // into it.
+    const bounds = new Box3().setFromObject(janitor);
+    expect(bounds.min.y).toBeGreaterThan(-0.05);
+    expect(bounds.min.y).toBeLessThan(0.05);
+    const height = bounds.getSize(new Vector3()).y;
+    expect(height).toBeGreaterThan(1.9);
+    expect(height).toBeLessThan(2.4);
   });
 
   it('can omit the baked promenade for player-authored path grids', () => {

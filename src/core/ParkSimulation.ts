@@ -28,6 +28,7 @@ import type {
   PlaceableKind,
   ServiceNeed,
   SimulationEvent,
+  StaffSnapshot,
   Vec2,
 } from './types';
 
@@ -41,7 +42,24 @@ interface FacilityRuntime extends FacilitySnapshot {
   services: ActiveService[];
 }
 
-interface GuestRuntime extends GuestSnapshot {
+/**
+ * The part of a person the movement code touches.
+ *
+ * Guests and staff walk the same paths, at their own speeds, under the same
+ * rule that a route is followed waypoint by waypoint and never short-cut. They
+ * share one implementation rather than two that drift, which is the only way to
+ * be sure a janitor cannot walk through a building the guests have to go round.
+ */
+interface Walker {
+  position: Vec2;
+  heading: number;
+  speed: number;
+  destination: Vec2;
+  route: Vec2[];
+  routeIndex: number;
+}
+
+interface GuestRuntime extends GuestSnapshot, Walker {
   destination: Vec2;
   route: Vec2[];
   routeIndex: number;
@@ -57,6 +75,16 @@ interface GuestRuntime extends GuestSnapshot {
    * instead of flickering between queueing and walking off.
    */
   priceSensitivity: number;
+}
+
+interface StaffRuntime extends StaffSnapshot, Walker {
+  destination: Vec2;
+  route: Vec2[];
+  routeIndex: number;
+  /** Seconds left of the pause taken to actually pick something up. */
+  collectTimer: number;
+  /** Seconds until this worker next looks around for a job. */
+  searchTimer: number;
 }
 
 export interface GuestNavigationNetwork {
@@ -77,6 +105,55 @@ const REPUTATION_SMOOTHING = 0.012;
  * after the screen stops showing every visitor.
  */
 const MAX_ATTENDANCE = 600;
+
+/**
+ * A janitor's walking speed. Guests draw 1.65-2.15 m/s and stop to dwell; a
+ * janitor is at work, so they sit just above the top of the guest range and
+ * never stand around unless there is nothing to do.
+ */
+const JANITOR_SPEED = 2.2;
+
+/**
+ * How close a janitor stops to the last waypoint of a route, how far their
+ * picker reaches from there, and how far off the path a piece of litter may lie
+ * before it is not their job.
+ *
+ * The three numbers are one decision, which is why they are written together.
+ * The reach is deliberately near the 1.7 m the player works at: a crew is meant
+ * to cover ground the player is not standing on, not to clean at range, and a
+ * wider radius would let a janitor parked at a junction sterilise a whole plaza
+ * without walking anywhere. The off-path limit is then the reach minus the
+ * arrival slack, so a janitor who finishes a route is always in reach of what
+ * they set out for. Getting that subtraction wrong does not look like a
+ * rounding error from the ground — the janitor arrives, finds the wrapper a
+ * hand's width too far away, gives up, and comes back for it forever.
+ *
+ * Litter beyond the limit is left for the player, who can cut across the grass
+ * where a janitor on the paths cannot. Almost none of it is: a guest drops
+ * litter where they are standing, and where they are standing is a path.
+ */
+const JANITOR_ARRIVE_RADIUS = 0.15;
+const JANITOR_REACH = 1.6;
+const JANITOR_OFF_PATH_LIMIT = JANITOR_REACH - JANITOR_ARRIVE_RADIUS;
+
+/**
+ * Seconds a janitor spends bent over a piece of litter before moving on.
+ * Without the pause the crew skims a messy plaza deleting wrappers at walking
+ * speed, which is both faster than one person can work and the difference
+ * between a park that has staff in it and a park where litter blinks out.
+ */
+const JANITOR_COLLECT_SECONDS = 1.4;
+
+/** How often a janitor with nothing to do looks around for something. */
+const JANITOR_SEARCH_INTERVAL = 1.5;
+
+/**
+ * How many pieces of litter a janitor will try to route to before giving up for
+ * this look-around. The nearest is almost always reachable; the cap is there so
+ * a park whose paths have just been cut in half cannot make one worker run the
+ * pathfinder over every wrapper in it.
+ */
+const JANITOR_ROUTE_ATTEMPTS = 4;
 
 const GATE_POSITION: Vec2 = { x: 0, z: 32 };
 const ENTRY_POSITION: Vec2 = { x: 0, z: 22 };
@@ -138,9 +215,11 @@ export class ParkSimulation {
   private readonly listeners = new Set<SimulationListener>();
   private readonly facilities = new Map<string, FacilityRuntime>();
   private readonly guests = new Map<string, GuestRuntime>();
+  private readonly staff = new Map<string, StaffRuntime>();
   private readonly litter = new Map<string, LitterSnapshot>();
   private nextGuestId = 1;
   private nextLitterId = 1;
+  private nextStaffId = 1;
   private spawnTimer = 1.25;
   private upkeepTimer = 45;
   private running = false;
@@ -198,6 +277,17 @@ export class ParkSimulation {
         } else if (guest.state === 'wandering') this.routeToRandomDestination(guest);
       }
     }
+
+    // A janitor whose route was paved over drops the job rather than finishing
+    // a walk that no longer exists. The next look-around finds the litter again
+    // if it is still reachable, and gives up on it honestly if it is not.
+    for (const worker of this.staff.values()) {
+      const routeIsStillWalkable = worker.route
+        .slice(worker.routeIndex)
+        .every((point) => nextDestinations.has(`${Math.round(point.x)},${Math.round(point.z)}`));
+      if (routeIsStillWalkable && this.assignRoute(worker, worker.destination)) continue;
+      this.releaseJanitor(worker);
+    }
   }
 
   setParkMetrics(appeal: number, upkeep: number): void {
@@ -237,6 +327,20 @@ export class ParkSimulation {
       ...guest,
       position: { ...guest.position },
       needs: copyNeeds(guest.needs),
+    }));
+  }
+
+  getStaff(): readonly StaffSnapshot[] {
+    return Array.from(this.staff.values(), (worker) => ({
+      id: worker.id,
+      role: worker.role,
+      postId: worker.postId,
+      position: { ...worker.position },
+      heading: worker.heading,
+      speed: worker.speed,
+      state: worker.state,
+      targetLitterId: worker.targetLitterId,
+      paletteIndex: worker.paletteIndex,
     }));
   }
 
@@ -299,6 +403,11 @@ export class ParkSimulation {
     };
 
     this.guests.clear();
+    // Staff are rebuilt from the crew posts the save restored, on the next
+    // setFacilities. Persisting a janitor's half-finished walk would be
+    // persisting engine state, which a save document deliberately does not
+    // carry; a reloaded park puts its crew back on their posts instead.
+    this.staff.clear();
     this.litter.clear();
     for (const item of state.litter ?? []) {
       if (!item || typeof item.id !== 'string') continue;
@@ -381,6 +490,8 @@ export class ParkSimulation {
         });
       }
     }
+
+    this.syncStaff();
   }
 
   purchase(kind: PlaceableKind): boolean {
@@ -428,6 +539,7 @@ export class ParkSimulation {
     for (const guest of [...this.guests.values()]) {
       this.updateGuest(guest, dt);
     }
+    this.updateStaff(dt);
 
     this.cleanNearbyLitter(playerPosition);
     this.ageLitter(dt);
@@ -887,6 +999,168 @@ export class ParkSimulation {
     }
   }
 
+  /**
+   * Puts one janitor on the books for every open crew post, and takes them off
+   * again when the post is sold, moved out of reach, or cut off from the paths.
+   *
+   * Staff are derived from buildings rather than owned outright. That is what
+   * makes them survive a save without the save format learning what a janitor
+   * is: a park that reloads with two crew posts reloads with two janitors,
+   * standing at their posts rather than wherever they happened to be when the
+   * player closed the tab. It is also why a disconnected post employs nobody —
+   * the wage is still charged, because upkeep is charged on what is built, and a
+   * hut behind a hedge with nobody able to leave it is exactly the mistake the
+   * player should be able to see and fix.
+   */
+  private syncStaff(): void {
+    const posts = new Map<string, FacilityRuntime>();
+    for (const facility of this.facilities.values()) {
+      if (!facility.enabled) continue;
+      if (getPlaceableSpec(facility.kind).staff === 'janitor') posts.set(facility.id, facility);
+    }
+
+    for (const [id, worker] of [...this.staff]) {
+      if (!posts.has(worker.postId)) this.staff.delete(id);
+    }
+
+    const employed = new Set(Array.from(this.staff.values(), (worker) => worker.postId));
+    for (const post of posts.values()) {
+      if (!employed.has(post.id)) this.hireJanitor(post);
+    }
+  }
+
+  private hireJanitor(post: FacilityRuntime): void {
+    const start = this.approachPoint(post);
+    const worker: StaffRuntime = {
+      id: `staff-${this.nextStaffId++}`,
+      role: 'janitor',
+      postId: post.id,
+      position: { ...start },
+      heading: post.rotation,
+      speed: JANITOR_SPEED,
+      state: 'idle',
+      targetLitterId: null,
+      paletteIndex: this.random.integer(0, 5),
+      destination: { ...start },
+      route: [],
+      routeIndex: 0,
+      collectTimer: 0,
+      searchTimer: 0,
+    };
+    this.staff.set(worker.id, worker);
+  }
+
+  private updateStaff(dt: number): void {
+    for (const worker of this.staff.values()) {
+      if (worker.state === 'collecting') {
+        worker.collectTimer -= dt;
+        if (worker.collectTimer <= 0) this.finishCollecting(worker);
+        continue;
+      }
+
+      // A wrapper the player walked over, or one another janitor reached first,
+      // has stopped being a job halfway through the walk to it.
+      if (worker.targetLitterId && !this.litter.has(worker.targetLitterId)) {
+        this.releaseJanitor(worker);
+      }
+
+      worker.searchTimer -= dt;
+      if (worker.state === 'idle' && worker.searchTimer <= 0) {
+        worker.searchTimer = JANITOR_SEARCH_INTERVAL;
+        this.assignJanitorWork(worker);
+      }
+
+      const arrived = this.moveAlongRoute(worker, dt, JANITOR_ARRIVE_RADIUS);
+      if (worker.state !== 'walking') continue;
+
+      const target = worker.targetLitterId ? this.litter.get(worker.targetLitterId) : undefined;
+      if (!target) {
+        this.releaseJanitor(worker);
+        continue;
+      }
+      // Arriving is not the only way to be close enough: the route may pass
+      // straight over something dropped since it was issued.
+      if (arrived || distanceSquared(worker.position, target.position) <= JANITOR_REACH ** 2) {
+        worker.state = 'collecting';
+        worker.collectTimer = JANITOR_COLLECT_SECONDS;
+      }
+    }
+  }
+
+  /**
+   * Sends a janitor after the nearest piece of litter nobody else has claimed,
+   * or back to their post when the park is clean.
+   */
+  private assignJanitorWork(worker: StaffRuntime): void {
+    const claimed = new Set<string>();
+    for (const other of this.staff.values()) {
+      if (other !== worker && other.targetLitterId) claimed.add(other.targetLitterId);
+    }
+
+    const candidates = [...this.litter.values()]
+      .filter((item) => !claimed.has(item.id) && this.canWalkTo(item.position))
+      .sort(
+        (a, b) =>
+          distanceSquared(worker.position, a.position) - distanceSquared(worker.position, b.position),
+      )
+      .slice(0, JANITOR_ROUTE_ATTEMPTS);
+
+    for (const item of candidates) {
+      const standing = this.nearestWalkableDestination(item.position) ?? item.position;
+      if (!this.assignRoute(worker, standing)) continue;
+      worker.targetLitterId = item.id;
+      worker.state = 'walking';
+      return;
+    }
+
+    // Nothing to do. Head back to the post — but only once, because re-issuing
+    // the route on every look-around would restart it at its first waypoint and
+    // walk the janitor backwards down the path they are already halfway along.
+    if (worker.routeIndex < worker.route.length) return;
+    const post = this.facilities.get(worker.postId);
+    if (!post) return;
+    const home = this.approachPoint(post);
+    if (distanceSquared(worker.position, home) <= 1) return;
+    this.assignRoute(worker, home);
+  }
+
+  private finishCollecting(worker: StaffRuntime): void {
+    const target = worker.targetLitterId ? this.litter.get(worker.targetLitterId) : undefined;
+    this.releaseJanitor(worker);
+    // The reach is checked again after the pause rather than trusted from
+    // before it. The one promise a cleaning crew has to keep is that nothing is
+    // ever cleaned from further away than a person could bend down and pick it
+    // up, and the only way to keep it is to measure at the moment of the pickup.
+    if (!target || distanceSquared(worker.position, target.position) > JANITOR_REACH ** 2) return;
+
+    this.litter.delete(target.id);
+    // No three dollars, unlike the player's own pickups. The player is paid for
+    // doing it themselves; a janitor is the thing the player pays. What the wage
+    // buys is the cleanliness, and cleanliness recovers on its own once the
+    // litter is gone.
+    this.stats = { ...this.stats, litterCleaned: this.stats.litterCleaned + 1 };
+    this.emit({ type: 'litter-removed', litterId: target.id, byPlayer: false });
+  }
+
+  /** Puts a janitor back on the clock with no job and no claim on any litter. */
+  private releaseJanitor(worker: StaffRuntime): void {
+    worker.targetLitterId = null;
+    worker.state = 'idle';
+    worker.collectTimer = 0;
+    worker.searchTimer = 0;
+  }
+
+  /**
+   * Whether a janitor could stand on the path network and still reach this
+   * point. With no network at all — the plain simulation the tests drive —
+   * everybody walks in straight lines and everywhere is reachable.
+   */
+  private canWalkTo(point: Vec2): boolean {
+    const standing = this.nearestWalkableDestination(point);
+    if (!standing) return true;
+    return distanceSquared(standing, point) <= JANITOR_OFF_PATH_LIMIT ** 2;
+  }
+
   private ageLitter(dt: number): void {
     for (const item of this.litter.values()) item.age += dt;
   }
@@ -897,74 +1171,74 @@ export class ParkSimulation {
     this.stats = { ...this.stats, cleanliness };
   }
 
-  private moveToward(guest: GuestRuntime, destination: Vec2, stepBudget: number, arriveRadius: number): number {
-    const dx = destination.x - guest.position.x;
-    const dz = destination.z - guest.position.z;
+  private moveToward(walker: Walker, destination: Vec2, stepBudget: number, arriveRadius: number): number {
+    const dx = destination.x - walker.position.x;
+    const dz = destination.z - walker.position.z;
     const distance = Math.hypot(dx, dz);
     if (distance <= arriveRadius) return stepBudget;
 
     const step = Math.min(distance, stepBudget);
-    guest.position.x += (dx / Math.max(distance, EPSILON)) * step;
-    guest.position.z += (dz / Math.max(distance, EPSILON)) * step;
-    guest.heading = Math.atan2(dx, dz);
+    walker.position.x += (dx / Math.max(distance, EPSILON)) * step;
+    walker.position.z += (dz / Math.max(distance, EPSILON)) * step;
+    walker.heading = Math.atan2(dx, dz);
     return Math.max(0, stepBudget - step);
   }
 
-  private moveAlongRoute(guest: GuestRuntime, dt: number, arriveRadius: number): boolean {
-    let stepBudget = guest.speed * dt;
-    while (guest.routeIndex < guest.route.length) {
-      const waypoint = guest.route[guest.routeIndex];
+  private moveAlongRoute(walker: Walker, dt: number, arriveRadius: number): boolean {
+    let stepBudget = walker.speed * dt;
+    while (walker.routeIndex < walker.route.length) {
+      const waypoint = walker.route[walker.routeIndex];
       if (!waypoint) break;
-      const isFinal = guest.routeIndex === guest.route.length - 1;
+      const isFinal = walker.routeIndex === walker.route.length - 1;
       const radius = isFinal ? arriveRadius : 0.12;
       const before = stepBudget;
-      stepBudget = this.moveToward(guest, waypoint, stepBudget, radius);
-      const reached = distanceSquared(guest.position, waypoint) <= radius * radius;
+      stepBudget = this.moveToward(walker, waypoint, stepBudget, radius);
+      const reached = distanceSquared(walker.position, waypoint) <= radius * radius;
       if (!reached) return false;
-      guest.routeIndex += 1;
+      walker.routeIndex += 1;
       if (stepBudget <= EPSILON || stepBudget === before) {
-        if (guest.routeIndex >= guest.route.length) return true;
+        if (walker.routeIndex >= walker.route.length) return true;
         if (stepBudget <= EPSILON) return false;
       }
     }
-    return guest.routeIndex >= guest.route.length;
+    return walker.routeIndex >= walker.route.length;
   }
 
-  private assignRoute(guest: GuestRuntime, destination: Vec2): boolean {
-    const start = this.nearestWalkableDestination(guest.position) ?? guest.position;
+  private assignRoute(walker: Walker, destination: Vec2): boolean {
+    const start = this.nearestWalkableDestination(walker.position) ?? walker.position;
     const route = this.navigation
       ? this.navigation.findPath(start, destination)
       : [destination];
     if (!route) {
-      guest.route = [];
-      guest.routeIndex = 0;
+      walker.route = [];
+      walker.routeIndex = 0;
       return false;
     }
 
-    guest.destination = { ...destination };
-    guest.route = route.map((point) => ({ ...point }));
-    if (distanceSquared(guest.position, start) > 0.08) guest.route.unshift({ ...start });
-    if (guest.route.length === 0) guest.route.push({ ...destination });
-    guest.routeIndex = 0;
+    walker.destination = { ...destination };
+    walker.route = route.map((point) => ({ ...point }));
+    if (distanceSquared(walker.position, start) > 0.08) walker.route.unshift({ ...start });
+    if (walker.route.length === 0) walker.route.push({ ...destination });
+    walker.routeIndex = 0;
     while (
-      guest.routeIndex < guest.route.length - 1 &&
-      distanceSquared(guest.position, guest.route[guest.routeIndex] ?? guest.position) < 0.08
+      walker.routeIndex < walker.route.length - 1 &&
+      distanceSquared(walker.position, walker.route[walker.routeIndex] ?? walker.position) < 0.08
     ) {
-      guest.routeIndex += 1;
+      walker.routeIndex += 1;
     }
     return true;
   }
 
-  private routeToRandomDestination(guest: GuestRuntime): void {
+  private routeToRandomDestination(walker: Walker): void {
     const choices = this.navigation?.destinations;
     if (choices && choices.length > 0) {
       const attempts = Math.min(8, choices.length);
       for (let attempt = 0; attempt < attempts; attempt += 1) {
         const destination = choices[this.random.integer(0, choices.length - 1)];
-        if (destination && this.assignRoute(guest, destination)) return;
+        if (destination && this.assignRoute(walker, destination)) return;
       }
     }
-    this.assignRoute(guest, ENTRY_POSITION);
+    this.assignRoute(walker, ENTRY_POSITION);
   }
 
   private nearestWalkableDestination(position: Vec2): Vec2 | null {

@@ -366,6 +366,9 @@ export class AssetFactory {
       case 'cash-machine':
         asset = this.createCashMachine();
         break;
+      case 'maintenance-hut':
+        asset = this.createMaintenanceHut();
+        break;
       case 'trash-bin':
         asset = this.createTrashBin();
         break;
@@ -1821,6 +1824,122 @@ export class AssetFactory {
     return root;
   }
 
+  /**
+   * The crew post: a two-bay works hut with the vehicle bay left open.
+   *
+   * The shutter is up rather than down on purpose. A closed box reads as
+   * storage; a bay with a barrow standing in it and brooms racked on the wall
+   * outside reads as somewhere people work from, which is what the player just
+   * bought. Everything is kept inside the 4 x 3 footprint including the tool
+   * rack and the bollards, so the hut never visually overhangs land the
+   * placement rules say it does not occupy.
+   */
+  createMaintenanceHut(): Group {
+    const root = makeRoot('Warden Yard Crew Post', 'placeable');
+    const concrete = this.materials.get('concrete');
+    const concreteDark = this.materials.get('concreteDark');
+    const cream = this.materials.get('paintCream');
+    const green = this.materials.get('paintGreen');
+    const teal = this.materials.get('paintTeal');
+    const yellow = this.materials.get('paintYellow');
+    const red = this.materials.get('paintRed');
+    const white = this.materials.get('paintWhite');
+    const dark = this.materials.get('steelDark');
+    const steel = this.materials.get('galvanized');
+    const glass = this.materials.get('glass');
+    const timber = this.materials.get('timber');
+    const timberDark = this.materials.get('timberDark');
+    const rubber = this.materials.get('rubber');
+    const brass = this.materials.get('brass');
+    const glow = this.materials.get('lampGlow');
+
+    addBox(root, [3.9, 0.15, 2.9], [0, 0.075, 0], concrete, 'crew yard hardstanding', 0.06, ZERO_ROTATION, false, true);
+    addBox(root, [3.4, 2.35, 0.18], [0, 1.25, -1.28], cream, 'rear clad wall assembly', 0.04);
+    addBox(root, [0.18, 2.35, 2.4], [-1.61, 1.25, -0.17], cream, 'left clad wall assembly', 0.04);
+    addBox(root, [0.18, 2.35, 2.4], [1.61, 1.25, -0.17], cream, 'right clad wall assembly', 0.04);
+    addBox(root, [0.3, 2.35, 0.18], [-1.55, 1.25, 0.94], cream, 'bay side wall return', 0.035);
+    addBox(root, [0.34, 2.35, 0.18], [0.22, 1.25, 0.94], cream, 'front opening mullion wall', 0.035);
+    addBox(root, [0.3, 2.35, 0.18], [1.55, 1.25, 0.94], cream, 'door side wall return', 0.035);
+    addBox(root, [3.4, 0.45, 0.18], [0, 2.2, 0.94], cream, 'front structural lintel', 0.035);
+
+    // Vehicle bay: shutter rolled up into its hood, guides left showing.
+    addBox(root, [1.45, 0.06, 0.5], [-0.675, 0.16, 1.15], concreteDark, 'bay ramped threshold', 0.02, ZERO_ROTATION, false, true);
+    addBox(root, [1.42, 0.6, 0.08], [-0.675, 1.66, 0.98], steel, 'rolled shutter curtain', 0.02);
+    for (const y of [1.44, 1.58, 1.72, 1.86]) {
+      addBox(root, [1.42, 0.03, 0.02], [-0.675, y, 1.03], dark, 'shutter slat seam', 0.006, ZERO_ROTATION, false, false);
+    }
+    addBox(root, [1.66, 0.3, 0.36], [-0.675, 2.11, 1.02], dark, 'shutter hood canister', 0.05);
+    for (const x of [-1.43, 0.08]) {
+      addBox(root, [0.1, 1.94, 0.12], [x, 1.12, 1.0], dark, 'shutter guide rail', 0.02);
+      addBolt(root, [x, 0.42, 1.07], steel, ZERO_ROTATION, 0.026);
+      addBolt(root, [x, 1.82, 1.07], steel, ZERO_ROTATION, 0.026);
+    }
+
+    // What is parked in the bay is what the hut is for.
+    addBox(root, [0.66, 0.34, 0.78], [-0.72, 0.55, 0.32], green, 'litter barrow tub', 0.09);
+    addBox(root, [0.7, 0.07, 0.12], [-0.72, 0.75, 0.72], steel, 'barrow tipping lip', 0.02, ZERO_ROTATION, false, true);
+    addBrace(root, [-0.98, 0.36, -0.16], [-0.98, 0.34, 0.66], 0.028, dark, 'barrow chassis rail');
+    addBrace(root, [-0.46, 0.36, -0.16], [-0.46, 0.34, 0.66], 0.028, dark, 'barrow chassis rail');
+    addBrace(root, [-0.98, 0.36, -0.16], [-0.98, 0.72, -0.44], 0.024, dark, 'barrow push handle', false);
+    addBrace(root, [-0.46, 0.36, -0.16], [-0.46, 0.72, -0.44], 0.024, dark, 'barrow push handle', false);
+    addCylinder(root, 0.17, 0.17, 0.08, [-0.72, 0.25, 0.68], rubber, 'barrow wheel', [0, 0, Math.PI / 2], 12);
+    addCylinder(root, 0.05, 0.05, 0.1, [-0.72, 0.25, 0.68], steel, 'barrow axle bearing', [0, 0, Math.PI / 2], 8, false, true);
+    for (const [x, lid] of [[-1.24, green], [-0.24, yellow]] as const) {
+      addBox(root, [0.52, 0.86, 0.46], [x, 0.6, -0.78], dark, 'wheeled bin body', 0.05);
+      addBox(root, [0.56, 0.09, 0.5], [x, 1.06, -0.79], lid, 'wheeled bin lid', 0.03);
+      addCylinder(root, 0.09, 0.09, 0.06, [x, 0.21, -0.6], rubber, 'bin castor wheel', [0, 0, Math.PI / 2], 10, false, true);
+    }
+
+    // Crew door.
+    addBox(root, [1.0, 2.0, 0.1], [0.895, 1.16, 0.97], teal, 'crew personnel door', 0.04);
+    addBox(root, [1.16, 0.09, 0.19], [0.895, 2.24, 0.93], dark, 'door head frame', 0.018);
+    for (const x of [0.33, 1.46]) addBox(root, [0.08, 2.12, 0.19], [x, 1.2, 0.93], dark, 'door jamb frame', 0.018);
+    addBox(root, [0.44, 0.4, 0.02], [0.895, 1.74, 1.03], glass, 'door vision panel', 0.008, ZERO_ROTATION, false, false);
+    addBox(root, [0.82, 0.11, 0.025], [0.895, 0.36, 1.03], steel, 'door kick plate trim', 0.01, ZERO_ROTATION, false, false);
+    addCylinder(root, 0.042, 0.042, 0.15, [1.31, 1.08, 1.06], brass, 'crew door lever handle', [Math.PI / 2, 0, 0], 10, false, true);
+    for (const y of [0.5, 1.16, 1.82]) addBox(root, [0.035, 0.17, 0.025], [0.42, y, 1.04], steel, 'door hinge leaf', 0.008, ZERO_ROTATION, false, false);
+    addBox(root, [0.6, 0.48, 0.05], [1.55, 1.42, 1.06], white, 'duty rota board', 0.02, ZERO_ROTATION, false, true);
+    for (const y of [1.54, 1.4, 1.26]) addBox(root, [0.46, 0.03, 0.015], [1.55, y, 1.09], dark, 'rota board rule', 0.006, ZERO_ROTATION, false, false);
+
+    // Mono-pitch roof falling to the front, with the drainage that implies.
+    addBox(root, [3.74, 0.18, 2.76], [0, 2.58, -0.14], white, 'roof deck assembly', 0.05, [-0.055, 0, 0]);
+    for (const x of [-1.35, -0.45, 0.45, 1.35]) {
+      addBox(root, [0.045, 0.05, 2.6], [x, 2.71, -0.14], steel, 'roof standing seam', 0.008, [-0.055, 0, 0], false, false);
+    }
+    addBox(root, [3.82, 0.11, 0.13], [0, 2.44, 1.2], dark, 'roof drip edge', 0.022);
+    addBox(root, [3.6, 0.13, 0.16], [0, 2.35, 1.24], steel, 'eaves gutter channel', 0.035, ZERO_ROTATION, false, true);
+    addBox(root, [0.11, 2.24, 0.11], [1.72, 1.24, 1.2], steel, 'rainwater downspout', 0.022, ZERO_ROTATION, false, true);
+    addCylinder(root, 0.15, 0.15, 0.38, [0.86, 2.82, -0.62], steel, 'workshop extract vent', ZERO_ROTATION, 12);
+    addCylinder(root, 0.24, 0.15, 0.08, [0.86, 3.05, -0.62], steel, 'vent rain cap', ZERO_ROTATION, 12, false, true);
+
+    // Tool rack and hose reel: the kit that says who works here, mounted flat
+    // against the walls so nothing reaches past the hardstanding.
+    addBox(root, [0.08, 0.1, 1.55], [-1.76, 1.52, -0.2], steel, 'tool rack mounting rail', 0.02);
+    for (const z of [-0.78, -0.2, 0.38]) {
+      addCylinder(root, 0.028, 0.028, 1.32, [-1.76, 0.92, z], timber, 'broom handle', ZERO_ROTATION, 8);
+      addBox(root, [0.1, 0.11, 0.4], [-1.76, 0.3, z], timberDark, 'broom head stock', 0.02);
+      addBox(root, [0.09, 0.17, 0.36], [-1.76, 0.16, z], this.materials.get('cardboard'), 'broom bristle block', 0.015, ZERO_ROTATION, false, false);
+      addBox(root, [0.06, 0.05, 0.09], [-1.75, 1.42, z], dark, 'rack retaining clip', 0.012, ZERO_ROTATION, false, false);
+    }
+    addBox(root, [0.12, 0.44, 0.52], [1.7, 1.32, -0.5], steel, 'hose reel wall bracket', 0.03);
+    addCylinder(root, 0.27, 0.27, 0.24, [1.79, 1.32, -0.5], red, 'hose reel drum', [0, 0, Math.PI / 2], 14);
+    addTorus(root, 0.21, 0.045, [1.79, 1.32, -0.5], rubber, 'coiled hose', [0, Math.PI / 2, 0], 20, false);
+    addCylinder(root, 0.05, 0.05, 0.12, [1.79, 1.32, -0.5], brass, 'reel spindle hub', [0, 0, Math.PI / 2], 8, false, true);
+
+    addBox(root, [0.22, 0.13, 0.2], [1.5, 2.4, 1.01], dark, 'shielded yard wall light', 0.03, [0.16, 0, 0], false, true);
+    addSphere(root, 0.07, [1.5, 2.32, 1.11], glow, 'yard light lens', [1.3, 0.6, 0.8], false, 8);
+    this.addSign(root, 'PARK SERVICES', [1.9, 0.32], [-0.35, 2.2, 1.04], 0x2f7777, 0xffe6ae, 'GROUNDS & CLEANING');
+
+    for (const x of [-1.78, 1.78]) {
+      addCylinder(root, 0.08, 0.09, 0.78, [x, 0.39, 1.3], steel, 'yard guard bollard', ZERO_ROTATION, 12);
+      addCylinder(root, 0.09, 0.09, 0.08, [x, 0.62, 1.3], yellow, 'bollard reflective band', ZERO_ROTATION, 12, false, true);
+      addBolt(root, [x, 0.17, 1.3], steel, ZERO_ROTATION, 0.03);
+    }
+
+    root.userData.entryPoints = [[0.895, 0, 1.75]];
+    return root;
+  }
+
   createTrashBin(): Group {
     const root = makeRoot('Sorting Bin', 'placeable');
     const dark = this.materials.get('steelDark');
@@ -2271,6 +2390,32 @@ export class AssetFactory {
     return root;
   }
 
+  /**
+   * A janitor. Read at a glance against a crowd: safety orange over a dark work
+   * shirt and a white hard hat, none of which any guest palette contains, and a
+   * silhouette broadened by the vest and squared off at the head.
+   *
+   * The player is a caretaker in the same worker kit but blue and capped, so the
+   * two staff figures do not read as each other either.
+   */
+  createJanitor(paletteIndex = 0): Group {
+    const index = Math.abs(Math.floor(paletteIndex));
+    const root = this.createHumanoid({
+      name: `Park Janitor ${index + 1}`,
+      shirt: 0x2c3a44,
+      trousers: 0x2a3037,
+      skin: SKIN_PALETTE[index % SKIN_PALETTE.length] ?? SKIN_PALETTE[0],
+      hair: HAIR_PALETTE[(index * 2) % HAIR_PALETTE.length] ?? HAIR_PALETTE[0],
+      worker: true,
+      vest: 0xe0721c,
+    });
+    root.name = `Janitor ${index + 1}`;
+    root.userData.assetType = 'janitor';
+    root.userData.paletteIndex = index;
+    root.userData.motion = 0;
+    return root;
+  }
+
   createLitter(variant = 0): Group {
     const root = makeRoot(`Litter ${variant}`, 'litter');
     const normalized = ((Math.floor(variant) % 4) + 4) % 4;
@@ -2708,6 +2853,16 @@ export class AssetFactory {
     skin: number;
     hair: number;
     worker: boolean;
+    /**
+     * A high-visibility over-vest in this colour, with a hard hat to match.
+     *
+     * Park staff have a job the crowd does not: being found. At the scale a
+     * phone actually draws a person the face and the tools are gone, so the
+     * only thing separating staff from a guest is a flat saturated block at
+     * chest height in a colour no guest wears. That is what this is, and it is
+     * deliberately not subtle.
+     */
+    vest?: number;
   }): Group {
     const root = makeRoot(options.name, 'character');
     const shirt = this.materials.paint(options.shirt, 0.68);
@@ -2760,12 +2915,33 @@ export class AssetFactory {
     addBox(carriedItem, [0.16, 0.025, 0.13], [0, 0, 0], this.materials.get('paper'), 'carried wrapper', 0.012, [0.15, 0.25, 0], false, false);
     carriedItem.visible = false;
 
+    if (options.vest !== undefined) {
+      const vest = this.materials.paint(options.vest, 0.62);
+      const white = this.materials.get('paintWhite');
+      addBox(root, [0.6, 0.56, 0.4], [0, 1.24, 0], vest, 'high visibility over vest', 0.1);
+      for (const side of [-1, 1] as const) {
+        addBox(root, [0.15, 0.2, 0.42], [side * 0.22, 1.46, 0], vest, 'vest shoulder panel', 0.05);
+      }
+      for (const z of [0.205, -0.205]) {
+        addBox(root, [0.62, 0.07, 0.02], [0, 1.32, z], white, 'vest retroreflective band', 0.008, ZERO_ROTATION, false, false);
+      }
+      addBox(root, [0.16, 0.14, 0.02], [-0.18, 1.1, 0.205], white, 'vest pocket flap', 0.008, ZERO_ROTATION, false, false);
+      addSphere(root, 0.27, [0, 2.02, 0.005], white, 'hard hat shell', [0.94, 0.62, 0.98], true, 12);
+      addBox(root, [0.56, 0.045, 0.56], [0, 1.88, 0.02], white, 'hard hat brim', 0.02, ZERO_ROTATION, false, true);
+    }
+
     if (options.worker) {
-      addBox(root, [0.47, 0.08, 0.018], [0, 1.38, 0.16], this.materials.get('paintYellow'), 'high visibility chest stripe', 0.012, ZERO_ROTATION, false, false);
-      addBox(root, [0.47, 0.08, 0.018], [0, 1.18, 0.16], this.materials.get('paintYellow'), 'high visibility waist stripe', 0.012, ZERO_ROTATION, false, false);
+      const stripe = this.materials.get('paintYellow');
+      // The stripes ride on the vest when there is one, and on the shirt when
+      // there is not, so they never sink into the garment underneath.
+      const stripeZ = options.vest === undefined ? 0.16 : 0.21;
+      addBox(root, [0.47, 0.08, 0.018], [0, 1.38, stripeZ], stripe, 'high visibility chest stripe', 0.012, ZERO_ROTATION, false, false);
+      addBox(root, [0.47, 0.08, 0.018], [0, 1.18, stripeZ], stripe, 'high visibility waist stripe', 0.012, ZERO_ROTATION, false, false);
       addBox(root, [0.48, 0.4, 0.12], [0, 1.25, -0.2], this.materials.get('paintBlue'), 'maintenance backpack', 0.08);
-      addBox(root, [0.34, 0.1, 0.38], [0, 2.16, 0.03], shirt, 'caretaker cap crown', 0.07);
-      addBox(root, [0.34, 0.035, 0.23], [0, 2.13, 0.24], shirt, 'caretaker cap brim', 0.03, [-0.05, 0, 0], false, true);
+      if (options.vest === undefined) {
+        addBox(root, [0.34, 0.1, 0.38], [0, 2.16, 0.03], shirt, 'caretaker cap crown', 0.07);
+        addBox(root, [0.34, 0.035, 0.23], [0, 2.13, 0.24], shirt, 'caretaker cap brim', 0.03, [-0.05, 0, 0], false, true);
+      }
       addBrace(root, [0.36, 1.18, -0.05], [0.45, 0.35, 0.18], 0.018, this.materials.get('galvanized'), 'litter picker tool', false);
     } else if ((options.shirt & 1) === 0) {
       addBox(root, [0.34, 0.4, 0.13], [0, 1.24, -0.2], this.materials.paint(options.shirt ^ 0x202020, 0.72), 'guest daypack', 0.07);

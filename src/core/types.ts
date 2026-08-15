@@ -18,6 +18,7 @@ export type PlaceableKind =
   | 'first-aid'
   | 'information-booth'
   | 'cash-machine'
+  | 'maintenance-hut'
   | 'trash-bin'
   | 'bench'
   | 'park-lamp'
@@ -41,6 +42,7 @@ export type PlaceableIcon =
   | 'first-aid'
   | 'information'
   | 'cash-machine'
+  | 'broom'
   | 'bin'
   | 'bench'
   | 'lamp'
@@ -57,6 +59,18 @@ export type ServiceNeed =
   | 'information'
   | 'cash'
   | null;
+
+/**
+ * A job the park pays somebody to do. Staff are hired by building the post they
+ * work out of, so the role belongs to the building's spec rather than to a
+ * separate roster: one janitor per crew post, and the wage is that post's
+ * upkeep.
+ *
+ * Only the janitor exists. The mechanic and the entertainer are named in
+ * docs/NEXT.md and will want the same shape, which is why this is a role rather
+ * than a boolean.
+ */
+export type StaffRole = 'janitor';
 
 export interface Vec2 {
   x: number;
@@ -87,6 +101,13 @@ export interface PlaceableSpec {
    * saved parks built from them, need no migration.
    */
   radius?: number;
+  /**
+   * The job this building puts somebody on the payroll to do. Present only on
+   * buildings bought to employ staff rather than to serve a guest directly, so
+   * every spec written before staff existed keeps meaning exactly what it did.
+   * One post employs one worker; a second janitor is a second post.
+   */
+  staff?: StaffRole;
 }
 
 export interface FacilitySnapshot {
@@ -144,6 +165,30 @@ export interface GuestSnapshot {
    * what stops a price rise from being free money.
    */
   wallet: number;
+}
+
+export type StaffState = 'idle' | 'walking' | 'collecting';
+
+/**
+ * One member of staff on the paths.
+ *
+ * Deliberately not a guest: staff have no needs, no wallet and no happiness,
+ * they never leave, and nothing about them belongs in the reputation average.
+ * What they share with a guest is the walking, which is why both are moved by
+ * the same route code.
+ */
+export interface StaffSnapshot {
+  id: string;
+  role: StaffRole;
+  /** The building that employs them. Sell the post and the worker goes with it. */
+  postId: string;
+  position: Vec2;
+  heading: number;
+  speed: number;
+  state: StaffState;
+  /** The piece of litter this worker is on their way to, if any. */
+  targetLitterId: string | null;
+  paletteIndex: number;
 }
 
 export interface LitterSnapshot {

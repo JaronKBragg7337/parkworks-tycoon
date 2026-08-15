@@ -24,7 +24,7 @@ import {
 import { ParkSimulation } from '../core/ParkSimulation';
 import { ParkGrid, type CellBounds, type GridCell, type SurfaceOperationQuote } from '../core/ParkGrid';
 import { totalParkAppeal, type AppealContribution } from '../core/appeal';
-import { getPlaceableSpec } from '../core/catalog';
+import { getPlaceableSpec, requiresPathAccess, STAFF_ROLE_LABELS } from '../core/catalog';
 import {
   computeAwayProgress,
   createEmptyAwayProfile,
@@ -40,7 +40,14 @@ import {
 } from '../core/saveGame';
 import { resolveSaveBackend, type SaveBackend } from '../core/SaveStore';
 import { typicalWallet } from '../core/pricing';
-import type { FacilitySnapshot, GuestSnapshot, LitterSnapshot, PlacedObject, PlaceableKind } from '../core/types';
+import type {
+  FacilitySnapshot,
+  GuestSnapshot,
+  LitterSnapshot,
+  PlacedObject,
+  PlaceableKind,
+  StaffSnapshot,
+} from '../core/types';
 import { InputController } from '../controls/InputController';
 import { cameraRelativeMovement } from '../controls/movementMath';
 import { AssetFactory } from '../world/AssetFactory';
@@ -63,7 +70,8 @@ import {
   type PlacementPointerState,
 } from './placementPointerState';
 
-interface GuestVisual {
+/** One walking figure on screen — a guest or a member of staff. */
+interface CharacterVisual {
   object: Object3D;
   previousPosition: Vector3;
 }
@@ -110,7 +118,8 @@ export class ParkGame {
   private readonly infrastructureView: ParkInfrastructureView;
   private readonly clock = new Clock();
   private readonly placedObjects: PlacedObject[] = [];
-  private readonly guestVisuals = new Map<string, GuestVisual>();
+  private readonly guestVisuals = new Map<string, CharacterVisual>();
+  private readonly staffVisuals = new Map<string, CharacterVisual>();
   private readonly litterVisuals = new Map<string, Object3D>();
   private readonly player: Object3D;
   private readonly playerPosition = new Vector3(0, 0, 18.5);
@@ -154,6 +163,7 @@ export class ParkGame {
   private readonly selectionArrow: Mesh;
   private tapCandidate: { x: number; y: number; time: number } | null = null;
   private readonly guestRenderBudget: number;
+  private readonly staffRenderBudget: number;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -183,6 +193,11 @@ export class ParkGame {
     // The phone budget from docs/DESIGN.md, now a drawing limit rather than a
     // limit on how many guests the park may have.
     this.guestRenderBudget = mobileQuality ? 42 : 90;
+    // Staff draw from the same budget by the same nearest-first rule, but with
+    // their own slice of it: a park with thirty crew posts is a park the player
+    // built on purpose, and it still must not cost thirty extra figures a frame
+    // when the camera is nowhere near any of them.
+    this.staffRenderBudget = Math.max(6, Math.round(this.guestRenderBudget / 4));
     this.infrastructureView = new ParkInfrastructureView(this.materials);
     this.player = this.assets.createPlayer();
     this.root.dataset.playerX = this.playerPosition.x.toFixed(3);
@@ -394,19 +409,22 @@ export class ParkGame {
   private refreshInspector(): void {
     const selected = this.getSelected();
     if (!selected) return;
-    const connected =
-      selected.spec.serviceNeed === null || selected.object.userData.connected !== false;
-    const detail = selected.spec.serviceNeed === null
-      ? `Upkeep ${selected.spec.upkeep}/cycle`
-      : connected
-        ? `Open · queue ${selected.queueLength} · upkeep ${selected.spec.upkeep}/cycle`
-        : 'No path reaches this yet';
+    const spec = selected.spec;
+    const connected = !requiresPathAccess(spec) || selected.object.userData.connected !== false;
+    let detail: string;
+    if (!requiresPathAccess(spec)) detail = `Upkeep ${spec.upkeep}/cycle`;
+    else if (!connected) detail = 'No path reaches this yet';
+    else if (spec.staff) {
+      detail = `One ${STAFF_ROLE_LABELS[spec.staff]} on duty · wages ${spec.upkeep}/cycle`;
+    } else detail = `Open · queue ${selected.queueLength} · upkeep ${spec.upkeep}/cycle`;
     this.ui.setInspector({
-      name: selected.spec.name,
+      name: spec.name,
       detail,
       tone: connected ? 'positive' : 'warning',
-      resale: Math.round(selected.spec.cost * RESALE_RATE),
-      price: this.simulation.getPrice(selected.spec.kind),
+      resale: Math.round(spec.cost * RESALE_RATE),
+      // A crew post has no counter, so "Free to use" would be answering a
+      // question nobody asked about it.
+      price: spec.staff ? undefined : this.simulation.getPrice(spec.kind),
     });
   }
 
@@ -771,7 +789,7 @@ export class ParkGame {
     const contributions: AppealContribution[] = this.placedObjects.map((placed) => ({
       spec: placed.spec,
       position: placed.position,
-      connected: placed.spec.serviceNeed === null || placed.object.userData.connected !== false,
+      connected: !requiresPathAccess(placed.spec) || placed.object.userData.connected !== false,
     }));
     // The same total the live spawner uses, from the same function, so an
     // absence draws the crowd the park was drawing when the player closed it.
@@ -1070,7 +1088,8 @@ export class ParkGame {
     this.infrastructureView.setLandMode(false);
     this.applySimulationState();
     this.requestSave();
-    const connected = placed.spec.serviceNeed === null || placed.object.userData.connected !== false;
+    const connected =
+      !requiresPathAccess(placed.spec) || placed.object.userData.connected !== false;
     this.ui.toast(
       connected ? `${placed.spec.shortName} opened` : `${placed.spec.shortName} needs a connected path`,
       connected ? 'positive' : 'warning',
@@ -1079,8 +1098,11 @@ export class ParkGame {
 
   private syncFacilities(): void {
     const connectivityById = new Map<string, ReturnType<ParkGrid['getFacilityConnectivity']>>();
+    // A crew post serves no guest need but still goes to the simulation, which
+    // is where its janitor is hired and where the path connection that lets
+    // them out of the yard is decided.
     const snapshots: FacilitySnapshot[] = this.placedObjects
-      .filter((placed) => placed.spec.serviceNeed !== null)
+      .filter((placed) => requiresPathAccess(placed.spec))
       .map((placed) => {
         const bounds = this.footprintBounds(placed.position, placed.spec.footprint, placed.rotation);
         const connectivity = this.parkGrid.getFacilityConnectivity(this.parkGrid.getApproachCells(bounds));
@@ -1105,7 +1127,7 @@ export class ParkGame {
         spec: placed.spec,
         position: placed.position,
         connected:
-          placed.spec.serviceNeed === null || connectivityById.get(placed.id)?.connected === true,
+          !requiresPathAccess(placed.spec) || connectivityById.get(placed.id)?.connected === true,
       })),
     );
     const upkeep = this.placedObjects.reduce((total, placed) => total + placed.spec.upkeep, 0);
@@ -1365,6 +1387,7 @@ export class ParkGame {
     this.updateInput(delta);
     this.simulation.update(delta, { x: this.playerPosition.x, z: this.playerPosition.z });
     this.syncGuestVisuals(this.simulation.getGuests(), delta);
+    this.syncStaffVisuals(this.simulation.getStaff(), delta);
     this.syncLitterVisuals(this.simulation.getLitter());
     this.animateWorld(elapsed, delta);
     this.updateCamera(delta);
@@ -1515,25 +1538,29 @@ export class ParkGame {
   }
 
   /**
-   * Draws the nearest guests only. The simulation is allowed to grow far past
+   * Draws the nearest figures only. The simulation is allowed to grow far past
    * what a phone can render, so attendance stops being limited by the mesh
    * budget: the crowd near the camera is real, and the rest of the park's
-   * visitors keep queueing, spending, and littering off screen.
+   * visitors keep queueing, spending, and littering off screen. Staff go
+   * through the same gate for the same reason.
    */
-  private visibleGuests(guests: readonly GuestSnapshot[]): readonly GuestSnapshot[] {
-    if (guests.length <= this.guestRenderBudget) return guests;
+  private nearestVisible<T extends { position: { x: number; z: number } }>(
+    figures: readonly T[],
+    budget: number,
+  ): readonly T[] {
+    if (figures.length <= budget) return figures;
     const focus = this.cameraTarget;
-    return [...guests]
+    return [...figures]
       .sort((a, b) => {
         const aDistance = (a.position.x - focus.x) ** 2 + (a.position.z - focus.z) ** 2;
         const bDistance = (b.position.x - focus.x) ** 2 + (b.position.z - focus.z) ** 2;
         return aDistance - bDistance;
       })
-      .slice(0, this.guestRenderBudget);
+      .slice(0, budget);
   }
 
   private syncGuestVisuals(allGuests: readonly GuestSnapshot[], delta: number): void {
-    const guests = this.visibleGuests(allGuests);
+    const guests = this.nearestVisible(allGuests, this.guestRenderBudget);
     const activeIds = new Set(guests.map((guest) => guest.id));
     for (const [id, visual] of this.guestVisuals) {
       if (activeIds.has(id)) continue;
@@ -1559,6 +1586,39 @@ export class ParkGame {
       this.assets.setCharacterMotion(visual.object, moved ? 0.88 : 0, guest.carryingTrash);
       visual.previousPosition.copy(target);
       visual.object.visible = guest.state !== 'using';
+    }
+  }
+
+  /**
+   * The same treatment for the crew, with one difference: a janitor bent over a
+   * wrapper is standing still on purpose, and the walk cycle has to stop for it
+   * or the pickup reads as a figure jogging on the spot.
+   */
+  private syncStaffVisuals(allStaff: readonly StaffSnapshot[], delta: number): void {
+    const staff = this.nearestVisible(allStaff, this.staffRenderBudget);
+    const activeIds = new Set(staff.map((worker) => worker.id));
+    for (const [id, visual] of this.staffVisuals) {
+      if (activeIds.has(id)) continue;
+      this.dynamicLayer.remove(visual.object);
+      this.staffVisuals.delete(id);
+    }
+
+    for (const worker of staff) {
+      let visual = this.staffVisuals.get(worker.id);
+      if (!visual) {
+        const object = this.assets.createJanitor(worker.paletteIndex);
+        this.dynamicLayer.add(object);
+        visual = { object, previousPosition: new Vector3(worker.position.x, 0, worker.position.z) };
+        this.staffVisuals.set(worker.id, visual);
+      }
+      const target = new Vector3(worker.position.x, 0, worker.position.z);
+      visual.object.position.lerp(target, 1 - Math.exp(-delta * 11));
+      visual.object.rotation.y = worker.heading;
+      const moved = worker.state !== 'collecting'
+        && target.distanceToSquared(visual.previousPosition) > 0.00002;
+      visual.object.userData.isWalking = moved;
+      this.assets.setCharacterMotion(visual.object, moved ? 0.95 : 0);
+      visual.previousPosition.copy(target);
     }
   }
 
@@ -1610,6 +1670,7 @@ export class ParkGame {
     const activity = this.started && !this.isPaused ? 1 : 0;
     this.assets.animate(this.player, elapsed, delta);
     for (const visual of this.guestVisuals.values()) this.assets.animate(visual.object, elapsed, delta);
+    for (const visual of this.staffVisuals.values()) this.assets.animate(visual.object, elapsed, delta);
     for (const placed of this.placedObjects) {
       const connectedActivity = placed.spec.serviceNeed === null || placed.object.userData.connected !== false;
       this.assets.animate(placed.object, elapsed, delta, connectedActivity ? activity : 0);

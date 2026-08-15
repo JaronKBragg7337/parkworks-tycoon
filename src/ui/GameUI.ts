@@ -621,11 +621,16 @@ export class GameUI {
         // Decoration is the one thing here whose worth depends on where it is
         // put, so its card says how far it reaches instead of leaving the
         // player to work out why their trees stopped counting.
-        const earns = typeof spec.radius === 'number'
-          ? `<small class="catalog-earns is-free">Adds ${spec.appeal} appeal within ${spec.radius} m</small>`
-          : charge > 0
-            ? `<small class="catalog-earns">Earns ${money(charge)} per guest</small>`
-            : '<small class="catalog-earns is-free">Free for guests</small>';
+        // Staff are the one thing on these cards that only ever costs. Saying
+        // "free for guests" about a crew post would be true and useless; the
+        // number the player needs is the wage, because that is the decision.
+        const earns = spec.staff
+          ? `<small class="catalog-earns is-wage">Wages ${money(spec.upkeep)} every upkeep cycle</small>`
+          : typeof spec.radius === 'number'
+            ? `<small class="catalog-earns is-free">Adds ${spec.appeal} appeal within ${spec.radius} m</small>`
+            : charge > 0
+              ? `<small class="catalog-earns">Earns ${money(charge)} per guest</small>`
+              : '<small class="catalog-earns is-free">Free for guests</small>';
         return `
         <button class="catalog-card" data-kind="${spec.kind}">
           <span class="catalog-icon">${icon(spec.icon as Parameters<typeof icon>[0])}</span>

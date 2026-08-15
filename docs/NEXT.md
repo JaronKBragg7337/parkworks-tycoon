@@ -23,9 +23,32 @@ sign-ins enabled with public content guarded behind `is_real_account()`.
    natural autosave beat, and it is the moment to revisit the 3.4-minute park
    day. It should report what wallets produced: takings, guests served, and how
    many left without spending.
-2. **Staff** — janitor, mechanic, entertainer. Litter is still only removable by
-   the player walking over it. Wages create the cash-flow pressure that makes
-   the pricing lever bite from the other side. Pathfinding already exists.
+2. **Staff** — the janitor is done; the mechanic and the entertainer are not.
+   The **Cleaning Crew** post ($620, upkeep 22) is a `facilities` placeable that
+   employs one janitor per hut. Staff are derived from buildings rather than
+   owned, so nothing in the save format had to learn what a janitor is — a park
+   reloads with its crew standing at their posts. Janitors walk the same
+   `GuestNavigationNetwork` guests do, at 2.2 m/s, and only pick up litter
+   within 1.6 m of where they are actually standing.
+
+   Measured on a park with 18 buildings and no bins at all, cleanliness
+   averaged over the second half of a 1,200-second run across six seeds:
+   **0 janitors 0%, one 61%, two 76%**. Past two it plateaus, and not because
+   the crew runs out of capacity — about 3% of litter lands more than 1.45 m
+   from any path cell (`pushOutOfBuildings` shoving a wrapper to a building's
+   wall) and a janitor on the paths cannot reach it. That is the ceiling. The
+   player still can, by cutting across the grass. On a three-building starter
+   park one janitor takes the same measurement from 0% to 96%: small parks are
+   solved by one hire, large ones are not.
+
+   **What is deliberately missing:** janitors do nothing in the away report.
+   `computeAwayProgress` currently projects litter created and nothing that
+   removes it, so a park left overnight comes back as dirty as if it had no
+   crew — while still paying their wages through `upkeepPerCycle`. Fixing it
+   means giving the projection a collection rate per janitor and netting it
+   against `litterCreated`; the live rate to calibrate against is roughly
+   0.15 pieces per second per janitor when there is a backlog to work through,
+   falling as the park gets clean.
 3. **Multi-park chain layer.** `computeAwayProgress` already models a park
    running unwatched, which is most of what "park A while you stand in park B"
    needs.
