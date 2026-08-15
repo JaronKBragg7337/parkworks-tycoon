@@ -537,12 +537,24 @@ export class ParkSimulation {
       guest.happiness = clamp01(guest.happiness + dt * 0.0015 * this.stats.cleanliness);
     }
 
+    if (guest.state === 'using' || guest.state === 'queueing') return;
+
+    // Litter is dropped only by a guest who is on their feet somewhere the
+    // player could walk.
+    //
+    // This block used to run above the return, so a guest could drop a wrapper
+    // while strapped into a ride — and a guest being served has their position
+    // set to the exact centre of the building. The litter therefore materialised
+    // inside the carousel, under the kiosk, in the middle of the sky wheel:
+    // measured at **35% of all litter**, none of it reachable, because the
+    // player cannot walk into a building to pick it up. The park got steadily
+    // dirtier and there was nothing to clean.
+    //
+    // Holding the wrapper until the ride ends is also just what people do.
     if (guest.carryingTrash && guest.trashTimer > 0) {
       guest.trashTimer -= dt;
       if (guest.trashTimer <= 0) this.routeTrash(guest);
     }
-
-    if (guest.state === 'using' || guest.state === 'queueing') return;
 
     if (guest.state === 'leaving') {
       if (this.moveAlongRoute(guest, dt, 0.55)) this.removeGuest(guest);
@@ -816,12 +828,43 @@ export class ParkSimulation {
     guest.happiness = clamp01(guest.happiness - 0.035);
   }
 
+  /**
+   * Pushes a point out of any building it landed in, to the nearest edge.
+   *
+   * The live path already avoids this by only dropping litter under a guest who
+   * is on their feet, but the offline projection scatters litter several metres
+   * around food outlets, which lands inside them often enough to matter. Litter
+   * the player cannot reach is litter that never goes away, so it is worth being
+   * certain rather than nearly certain.
+   */
+  private pushOutOfBuildings(point: Vec2): Vec2 {
+    for (const facility of this.facilities.values()) {
+      const spec = getPlaceableSpec(facility.kind);
+      // Footprints are axis-aligned before rotation; a quarter turn swaps them.
+      const turned = Math.abs(Math.round(facility.rotation / (Math.PI / 2))) % 2 === 1;
+      const halfX = (turned ? spec.footprint[1] : spec.footprint[0]) / 2 + 0.35;
+      const halfZ = (turned ? spec.footprint[0] : spec.footprint[1]) / 2 + 0.35;
+      const dx = point.x - facility.position.x;
+      const dz = point.z - facility.position.z;
+      if (Math.abs(dx) >= halfX || Math.abs(dz) >= halfZ) continue;
+
+      // Leave by whichever wall is closest, so the wrapper ends up beside the
+      // building it came from rather than teleporting across the park.
+      const outX = halfX - Math.abs(dx);
+      const outZ = halfZ - Math.abs(dz);
+      if (outX < outZ) point = { x: facility.position.x + Math.sign(dx || 1) * halfX, z: point.z };
+      else point = { x: point.x, z: facility.position.z + Math.sign(dz || 1) * halfZ };
+    }
+    return point;
+  }
+
   private createLitter(position: Vec2): void {
+    const clear = this.pushOutOfBuildings(position);
     const item: LitterSnapshot = {
       id: `litter-${this.nextLitterId++}`,
       position: {
-        x: position.x + this.random.range(-0.35, 0.35),
-        z: position.z + this.random.range(-0.35, 0.35),
+        x: clear.x + this.random.range(-0.35, 0.35),
+        z: clear.z + this.random.range(-0.35, 0.35),
       },
       variant: this.random.integer(0, 3),
       age: 0,

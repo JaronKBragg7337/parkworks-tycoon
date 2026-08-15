@@ -32,6 +32,70 @@ const MAX_GUESTS = 600;
 const BASE_GUESTS = 5;
 const APPEAL_PER_GUEST = 3;
 
+/**
+ * ParkSimulation.processSpawning sets the next spawn to
+ * `max(2.2, 6.8 * (1 - reputation/180) + random(0.5, 2.8))`. The jitter averages
+ * 1.65, which is what the projection uses — over hours of absence the mean is
+ * the only part that survives.
+ */
+const SPAWN_MINIMUM_SECONDS = 2.2;
+const SPAWN_BASE_SECONDS = 6.8;
+const SPAWN_JITTER_MEAN_SECONDS = 1.65;
+const SPAWN_REPUTATION_DIVISOR = 180;
+
+/**
+ * Time a departing guest spends walking to the gate after their visit ends.
+ * They still count as attendance while they do, and leaving it out made the
+ * projection's crowd noticeably smaller than the one on screen.
+ */
+const DEPARTURE_WALK_SECONDS = 22;
+
+function spawnIntervalSeconds(reputation: number): number {
+  const rating = Math.max(0, Math.min(100, reputation));
+  return Math.max(
+    SPAWN_MINIMUM_SECONDS,
+    SPAWN_BASE_SECONDS * (1 - rating / SPAWN_REPUTATION_DIVISOR) + SPAWN_JITTER_MEAN_SECONDS,
+  );
+}
+
+/**
+ * How many guests are actually in the park, which is **not** the same as how
+ * many it could hold.
+ *
+ * This was the bug behind an hour's absence paying out a quarter of a million.
+ * The projection used the appeal-derived *ceiling* as its population, but a park
+ * only reaches that ceiling if guests arrive faster than they leave. They do
+ * not: one arrives every few seconds and each stays about two and a half
+ * minutes, so attendance settles at arrivals × visit length — roughly half the
+ * ceiling for a mid-sized park. Paying out on the ceiling meant paying for
+ * guests who were never there, at 2.4 times the rate the same park earned on
+ * screen.
+ */
+function steadyStateAttendance(appeal: number, reputation: number): number {
+  const ceiling = Math.min(MAX_GUESTS, Math.max(0, BASE_GUESTS + Math.floor(appeal / APPEAL_PER_GUEST)));
+  const arrivalsDriven =
+    (GUEST_LIFETIME_SECONDS + DEPARTURE_WALK_SECONDS) / spawnIntervalSeconds(reputation);
+  return Math.min(ceiling, arrivalsDriven);
+}
+
+/**
+ * Share of a facility's theoretical throughput a real park actually achieves.
+ *
+ * The projection has no idea where anything is. It assumes every seat refills
+ * the instant it empties, when in truth guests spend a good part of their visit
+ * walking between things, and the further apart they are the less of the day is
+ * spent riding. Measured against the live simulation on the same park at two
+ * spacings: the projection ran 1.23x the live rate packed together and 1.52x
+ * spread out.
+ *
+ * One number cannot be right for both, because layout is exactly what this file
+ * cannot see. So it takes the pessimistic end. A park left running must never
+ * out-earn the same park played, or the best strategy becomes closing the tab —
+ * and being a little stingy to someone who was away is a far smaller sin than
+ * paying them better for not playing.
+ */
+const OFFLINE_UTILISATION = 0.65;
+
 /** ParkSimulation.processUpkeep charges the full upkeep total this often. */
 const UPKEEP_INTERVAL_SECONDS = 45;
 
@@ -146,10 +210,7 @@ export function computeAwayProgress(
   const creditedSeconds = Math.min(awaySeconds, AWAY_CREDIT_CAP_SECONDS);
   const capped = awaySeconds > AWAY_CREDIT_CAP_SECONDS;
 
-  const population = Math.min(
-    MAX_GUESTS,
-    Math.max(0, BASE_GUESTS + Math.floor(profile.appeal / APPEAL_PER_GUEST)),
-  );
+  const population = steadyStateAttendance(profile.appeal, stats.reputation);
 
   let servicesTotal = 0;
   let revenue = 0;
@@ -171,7 +232,11 @@ export function computeAwayProgress(
     const demandPerSecond =
       ((population * NEED_GROWTH_PER_SECOND[need]) / NEED_RELIEF_PER_SERVICE[need]) * acceptance;
     const servedPerSecond = Math.min(demandPerSecond, capacity.throughput);
-    const services = servedPerSecond * creditedSeconds;
+    // Utilisation is applied to what is earned, not to what is judged. A guest
+    // who wanted a ride and could have had one counts as satisfied even if the
+    // walk meant they never reached it, so reputation stays honest; but the
+    // park only banks the fares it would really have taken.
+    const services = servedPerSecond * OFFLINE_UTILISATION * creditedSeconds;
 
     demandTotal += demandPerSecond;
     metTotal += servedPerSecond;
