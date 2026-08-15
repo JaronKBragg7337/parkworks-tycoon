@@ -99,7 +99,10 @@ describe('offline earnings respect the wallets that walked in', () => {
     expect(capped).not.toBeNull();
     expect(capped!.revenue).toBeLessThan(uncapped!.revenue);
     // The bound is guests through the gate times what each one carried.
-    expect(capped!.revenue).toBeLessThanOrEqual(capped!.guestsVisited * 120 + 1);
+    // The reported guest count is rounded for display, so the takings can sit a
+    // fraction of one guest's wallet above it. Compare with a guest's slack
+    // rather than to the penny.
+    expect(capped!.revenue).toBeLessThanOrEqual((capped!.guestsVisited + 1) * 120);
   });
 
   it('scales the served count down with the money, not just the revenue', () => {

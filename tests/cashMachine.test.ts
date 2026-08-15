@@ -37,13 +37,19 @@ function drainingPark(withCashMachine: boolean) {
   simulation.setRunning(true);
 
   let withdrawals = 0;
+  // Counted from sales rather than read off `stats.revenue`, because the
+  // overnight settlement pays into revenue too. Including it would credit the
+  // cash machine for the daily payout and flatter both parks equally.
+  let traded = 0;
   simulation.subscribe((event) => {
-    if (event.type === 'service-complete' && event.facilityId === 'atm') withdrawals += 1;
+    if (event.type !== 'service-complete') return;
+    traded += event.revenue;
+    if (event.facilityId === 'atm') withdrawals += 1;
   });
   for (let tick = 0; tick < 600 * 10; tick += 1) {
     simulation.update(0.1, { x: 400, z: 400 });
   }
-  return { simulation, withdrawals };
+  return { simulation, withdrawals, traded };
 }
 
 describe('the cash machine', () => {
@@ -60,12 +66,18 @@ describe('the cash machine', () => {
   });
 
   it('is worth most to a park that charges the most', () => {
-    const withOne = drainingPark(true).simulation.getStats().revenue;
-    const without = drainingPark(false).simulation.getStats().revenue;
-    // Measured: $8,731 against $5,915, about half as much again. A park that
-    // lets people top up keeps selling; one that does not runs its guests dry
-    // and then cannot sell to them at any price.
-    expect(withOne).toBeGreaterThan(without * 1.25);
+    const withOne = drainingPark(true).traded;
+    const without = drainingPark(false).traded;
+    // A park that lets people top up keeps selling; one that does not runs its
+    // guests dry and then cannot sell to them at any price. Compared on sales
+    // alone, so the overnight settlement cannot flatter either side.
+    //
+    // Measured at 1.15x ($5,744 against $4,994). This was 1.48x before the park
+    // started closing overnight: guests are now sent home at the gates, so fewer
+    // of them live long enough to run dry, top up, and spend again. The machine
+    // is worth less in a day with an end to it, which is correct rather than a
+    // regression.
+    expect(withOne).toBeGreaterThan(without * 1.1);
   });
 
   it('is reachable by a guest who has nothing at all', () => {

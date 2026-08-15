@@ -17,10 +17,32 @@ describe('colour interpolation', () => {
 });
 
 describe('sky cycle', () => {
-  it('clamps outside opening hours instead of wrapping', () => {
-    expect(sampleSkyCycle(0)).toEqual(sampleSkyCycle(MORNING));
-    expect(sampleSkyCycle(24 * 60)).toEqual(sampleSkyCycle(CLOSING));
+  it('covers the whole day and closes on itself', () => {
+    // The table used to stop at the gates and clamp, so there was no night to
+    // look at. Now the park shuts overnight and the cycle has to carry the
+    // player across it, which means midnight and the end of the day must be the
+    // same sky — otherwise the light would jump at the rollover.
+    expect(sampleSkyCycle(0)).toEqual(sampleSkyCycle(24 * 60));
     expect(sampleSkyCycle(Number.NaN)).toEqual(sampleSkyCycle(MORNING));
+
+    // Night is genuinely darker than the day it sits between, but never black:
+    // the park stays walkable while it is closed, because the player builds at
+    // night.
+    //
+    // The bar is deliberately set against midday rather than at some absolute
+    // floor. An earlier version of this test asked only for ambient above 0.4
+    // and passed happily while the ground was, on screen, almost invisible —
+    // the number said "lit" and the park said otherwise. Holding night to a
+    // fraction of the day it is compared against is the thing that actually
+    // tracks whether you can see where you are going.
+    const midnight = sampleSkyCycle(0);
+    const midday = sampleSkyCycle(13 * 60);
+    expect(midnight.ambientIntensity).toBeLessThan(midday.ambientIntensity);
+    expect(midnight.ambientIntensity).toBeGreaterThan(midday.ambientIntensity * 0.75);
+    // Lit from above rather than from below the horizon, so surfaces catch
+    // something and the park does not flatten into silhouettes.
+    expect(midnight.sunPosition[1]).toBeGreaterThan(0);
+    expect(midnight.lampGlow).toBe(1);
   });
 
   it('lifts the sun toward midday and drops it by closing', () => {

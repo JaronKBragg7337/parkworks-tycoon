@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { appealFalloff, decorAppealAt, totalParkAppeal, type AppealContribution } from '../src/core/appeal';
 import { computeAwayProgress, createEmptyAwayProfile } from '../src/core/awayReport';
+import { OPEN_SHARE_OF_REAL_TIME, isParkOpen } from '../src/core/dayCycle';
 import { getPlaceableSpec } from '../src/core/catalog';
 import { ParkSimulation } from '../src/core/ParkSimulation';
 import type { PlaceableKind } from '../src/core/types';
@@ -150,29 +151,44 @@ describe('live and offline agree about a crowd', () => {
   const HOUR = 3_600;
   const VISIT_SECONDS = 155;
 
-  function liveAttendanceCeiling(appeal: number): number {
+  function liveAttendance(appeal: number) {
     const simulation = new ParkSimulation(411);
     simulation.setParkMetrics(appeal, 0);
     simulation.setFacilities([]);
     simulation.setRunning(true);
-    let ceiling = 0;
+    let peak = 0;
     for (let tick = 0; tick < 8_000; tick += 1) {
       simulation.update(0.1, { x: 200, z: 200 });
-      ceiling = Math.max(ceiling, simulation.getStats().guestCount);
+      // Only while trading. The park now shuts overnight and empties, and a
+      // reading taken at 3am would say the crowd is nobody.
+      if (isParkOpen(simulation.getStats().minuteOfDay)) {
+        peak = Math.max(peak, simulation.getStats().guestCount);
+      }
     }
-    return ceiling;
-  }
-
-  function projectedDepartures(appeal: number): number {
-    const profile = createEmptyAwayProfile();
-    profile.appeal = appeal;
-    return computeAwayProgress({ ...new ParkSimulation().getStats() }, profile, HOUR, 0)!.guestsVisited;
+    return { peak, stats: { ...simulation.getStats() } };
   }
 
   function expectAgreement(appeal: number): void {
-    const population = liveAttendanceCeiling(appeal);
-    expect(population).toBeGreaterThan(5);
-    expect(projectedDepartures(appeal)).toBe(Math.round((population * HOUR) / VISIT_SECONDS));
+    const { peak, stats } = liveAttendance(appeal);
+    expect(peak).toBeGreaterThan(5);
+
+    const profile = createEmptyAwayProfile();
+    profile.appeal = appeal;
+    // Judged against the same park's reputation, because attendance now depends
+    // on it: a better-regarded park is one people arrive at faster.
+    const projected = computeAwayProgress(stats, profile, HOUR, 0)!.guestsVisited;
+
+    // An hour of absence is not an hour of trading — the gates are shut for part
+    // of it, and only the open share sends anybody home.
+    const expected = (peak * HOUR * OPEN_SHARE_OF_REAL_TIME) / VISIT_SECONDS;
+
+    // Within a tenth, rather than exactly. The projection is explicitly an
+    // estimate: it derives attendance from the mean spawn interval while the
+    // live park rolls a fresh interval every arrival, so the two land close but
+    // never identical. Agreeing to the guest is not the invariant worth pinning;
+    // agreeing about the size of the crowd is.
+    expect(projected).toBeGreaterThan(expected * 0.9);
+    expect(projected).toBeLessThan(expected * 1.1);
   }
 
   it('draws the same crowd for a park whose decoration is where the guests are', () => {

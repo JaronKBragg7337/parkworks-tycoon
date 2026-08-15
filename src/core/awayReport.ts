@@ -22,6 +22,7 @@ import {
   SERVICED_NEEDS,
   type ServicedNeed,
 } from './needRates';
+import { OPEN_SHARE_OF_REAL_TIME, REAL_SECONDS_PER_PARK_DAY } from './dayCycle';
 import type { ParkStats } from './types';
 
 export { SERVICED_NEEDS };
@@ -99,10 +100,13 @@ const OFFLINE_UTILISATION = 0.65;
 /** ParkSimulation.processUpkeep charges the full upkeep total this often. */
 const UPKEEP_INTERVAL_SECONDS = 45;
 
-/** ParkSimulation.advanceClock: 3.5 sim-minutes per second, 9:00 to 21:00. */
-const SIM_MINUTES_PER_SECOND = 3.5;
-const SIM_MINUTES_PER_DAY = 12 * 60;
-export const REAL_SECONDS_PER_PARK_DAY = SIM_MINUTES_PER_DAY / SIM_MINUTES_PER_SECOND;
+/**
+ * The clock lives in dayCycle now, including how much of a day the park is
+ * actually open. A park left running overnight is not trading overnight, so the
+ * closed hours must not be credited — that would pay for business the park
+ * could not have done.
+ */
+export { REAL_SECONDS_PER_PARK_DAY };
 
 /** ParkSimulation.recalculateCleanliness. */
 const CLEANLINESS_LOST_PER_LITTER = 0.045;
@@ -210,6 +214,11 @@ export function computeAwayProgress(
   const creditedSeconds = Math.min(awaySeconds, AWAY_CREDIT_CAP_SECONDS);
   const capped = awaySeconds > AWAY_CREDIT_CAP_SECONDS;
 
+  // Only the hours the gates were open count as trading time. Everything that
+  // follows — arrivals, services, takings, litter — is measured against this
+  // rather than the wall clock.
+  const tradingSeconds = creditedSeconds * OPEN_SHARE_OF_REAL_TIME;
+
   const population = steadyStateAttendance(profile.appeal, stats.reputation);
 
   let servicesTotal = 0;
@@ -236,7 +245,7 @@ export function computeAwayProgress(
     // who wanted a ride and could have had one counts as satisfied even if the
     // walk meant they never reached it, so reputation stays honest; but the
     // park only banks the fares it would really have taken.
-    const services = servedPerSecond * OFFLINE_UTILISATION * creditedSeconds;
+    const services = servedPerSecond * OFFLINE_UTILISATION * tradingSeconds;
 
     demandTotal += demandPerSecond;
     metTotal += servedPerSecond;
@@ -248,7 +257,7 @@ export function computeAwayProgress(
   // Guests cannot spend what they did not bring. Departures over the credited
   // window set how many wallets came through the gate, and that total is the
   // ceiling on takings no matter how much throughput the park has.
-  const departuresForSpending = (population * creditedSeconds) / GUEST_LIFETIME_SECONDS;
+  const departuresForSpending = (population * tradingSeconds) / GUEST_LIFETIME_SECONDS;
   const wallet = profile.walletPerGuest;
   if (typeof wallet === 'number' && Number.isFinite(wallet) && wallet >= 0) {
     const moneyAvailable = departuresForSpending * wallet;

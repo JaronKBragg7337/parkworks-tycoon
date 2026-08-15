@@ -175,4 +175,16 @@ export type SimulationEvent =
   | { type: 'litter-removed'; litterId: string; byPlayer: boolean }
   | { type: 'reputation-changed'; delta: number }
   | { type: 'price-changed'; kind: PlaceableKind; price: number }
+  | { type: 'park-closed' }
+  | {
+      type: 'day-settled';
+      day: number;
+      /** Fixed subsidy, so a bad day is survivable. */
+      subsidy: number;
+      /** Paid on reputation — the reward for running the park well. */
+      standing: number;
+      /** A cut of the day's own takings — the reward for running it busy. */
+      share: number;
+      total: number;
+    }
   | { type: 'insufficient-funds'; required: number };

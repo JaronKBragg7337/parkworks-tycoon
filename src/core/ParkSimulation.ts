@@ -18,6 +18,7 @@ import {
   typicalWallet,
   type PriceBook,
 } from './pricing';
+import { advanceClock, isParkOpen, normaliseMinute } from './dayCycle';
 import { SeededRandom } from './random';
 import type {
   FacilitySnapshot,
@@ -77,6 +78,17 @@ const REPUTATION_SMOOTHING = 0.012;
  * after the screen stops showing every visitor.
  */
 const MAX_ATTENDANCE = 600;
+
+/**
+ * The overnight settlement. A struggling park still gets the subsidy, so a bad
+ * day is survivable; the other two parts only pay a park that is well regarded
+ * and busy. Tuned against a mid-sized park taking roughly $3,000 a day: that
+ * settles at about $1,400, meaningful next to a $1,850 carousel without ever
+ * replacing the job of actually running the place.
+ */
+const DAILY_SUBSIDY = 300;
+const DAILY_PER_REPUTATION_POINT = 10;
+const DAILY_TAKINGS_SHARE = 0.1;
 
 const GATE_POSITION: Vec2 = { x: 0, z: 32 };
 const ENTRY_POSITION: Vec2 = { x: 0, z: 22 };
@@ -148,6 +160,8 @@ export class ParkSimulation {
   private configuredAppeal: number | null = null;
   private configuredUpkeep: number | null = null;
   private prices: PriceBook = {};
+  /** Revenue reading when the current day began, for the overnight settlement. */
+  private revenueAtDayStart = 0;
   private stats: ParkStats = {
     cash: 4_200,
     reputation: 38,
@@ -228,6 +242,15 @@ export class ParkSimulation {
     return acceptanceRate(kind, this.prices, this.stats.reputation);
   }
 
+  /**
+   * Moves the clock, for development checks only. Wired to `window.__parkworks`
+   * in dev builds so dusk and the small hours can be looked at without waiting
+   * out a full day of daylight first.
+   */
+  debugSetClock(minuteOfDay: number): void {
+    this.stats = { ...this.stats, minuteOfDay: normaliseMinute(minuteOfDay) };
+  }
+
   getStats(): Readonly<ParkStats> {
     return this.stats;
   }
@@ -295,7 +318,7 @@ export class ParkSimulation {
       revenue: Math.max(0, Math.round(finiteOr(saved.revenue, 0))),
       expenses: Math.max(0, Math.round(finiteOr(saved.expenses, 0))),
       day: Math.max(1, Math.round(finiteOr(saved.day, 1))),
-      minuteOfDay: Math.max(9 * 60, Math.min(21 * 60, finiteOr(saved.minuteOfDay, 9 * 60))),
+      minuteOfDay: normaliseMinute(finiteOr(saved.minuteOfDay, 9 * 60)),
     };
 
     this.guests.clear();
@@ -316,6 +339,7 @@ export class ParkSimulation {
     // A save written before pricing existed has no price book, which is the
     // same thing as "everything charges the designed price".
     this.prices = sanitizePriceBook(state.prices);
+    this.revenueAtDayStart = this.stats.revenue;
     this.nextGuestId = Math.max(1, Math.round(finiteOr(state.nextGuestId, 1)));
     this.nextLitterId = Math.max(1, Math.round(finiteOr(state.nextLitterId, 1)));
     this.spawnTimer = 1.25;
@@ -436,13 +460,53 @@ export class ParkSimulation {
   }
 
   private advanceClock(dt: number): void {
-    let minuteOfDay = this.stats.minuteOfDay + dt * 3.5;
-    let day = this.stats.day;
-    if (minuteOfDay >= 21 * 60) {
-      minuteOfDay = 9 * 60;
-      day += 1;
+    const wasOpen = isParkOpen(this.stats.minuteOfDay);
+    const step = advanceClock(this.stats.minuteOfDay, dt);
+    this.stats = {
+      ...this.stats,
+      minuteOfDay: step.minuteOfDay,
+      day: this.stats.day + step.daysPassed,
+    };
+
+    // Closing time. Everyone still in the park makes for the gate, including
+    // anyone mid-queue — a park that shut with guests frozen in place would
+    // look broken and would keep earning after hours.
+    if (wasOpen && !isParkOpen(step.minuteOfDay)) {
+      for (const guest of this.guests.values()) {
+        if (guest.state !== 'leaving') this.startLeaving(guest);
+      }
+      this.emit({ type: 'park-closed' });
     }
-    this.stats = { ...this.stats, minuteOfDay, day };
+
+    if (step.daysPassed > 0) this.settleDay(step.daysPassed);
+  }
+
+  /**
+   * The books close overnight and the park is paid.
+   *
+   * This exists to make tomorrow worth reaching. Building the next thing is a
+   * long wait when takings trickle in a fare at a time, so a day should end with
+   * something arriving — and it should be *earned*, not a flat handout, or it
+   * stops meaning anything. Hence the three parts: a small fixed subsidy that
+   * keeps a struggling park alive, a reputation share that rewards running the
+   * place well, and a cut of the day's own takings that rewards running it busy.
+   */
+  private settleDay(days: number): void {
+    for (let index = 0; index < days; index += 1) {
+      const takings = Math.max(0, this.stats.revenue - this.revenueAtDayStart);
+      const subsidy = DAILY_SUBSIDY;
+      const standing = Math.round(this.stats.reputation * DAILY_PER_REPUTATION_POINT);
+      const share = Math.round(takings * DAILY_TAKINGS_SHARE);
+      const total = subsidy + standing + share;
+
+      this.stats = {
+        ...this.stats,
+        cash: this.stats.cash + total,
+        revenue: this.stats.revenue + total,
+      };
+      this.revenueAtDayStart = this.stats.revenue;
+      this.emit({ type: 'day-settled', day: this.stats.day, subsidy, standing, share, total });
+    }
   }
 
   private processUpkeep(dt: number): void {
@@ -464,6 +528,9 @@ export class ParkSimulation {
   }
 
   private processSpawning(dt: number): void {
+    // Nobody arrives at a shut park. The gates being closed is the whole reason
+    // night exists, and without this guests would keep queueing in the dark.
+    if (!isParkOpen(this.stats.minuteOfDay)) return;
     this.spawnTimer -= dt;
     const attractionAppeal = this.configuredAppeal ?? Array.from(this.facilities.values()).reduce(
       (total, facility) => total + (facility.enabled ? getPlaceableSpec(facility.kind).appeal : 0),

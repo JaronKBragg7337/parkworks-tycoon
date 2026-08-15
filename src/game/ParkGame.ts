@@ -297,6 +297,19 @@ export class ParkGame {
     this.animationFrame = requestAnimationFrame(this.animate);
   }
 
+  /**
+   * Development only — see the `import.meta.env.DEV` block in `main.ts`. Moves
+   * the clock and repaints the sky immediately, so a check does not have to wait
+   * for the next animation frame, which a background tab will never deliver.
+   */
+  debugSetClock(minuteOfDay: number): void {
+    this.simulation.debugSetClock(minuteOfDay);
+    const now = this.simulation.getStats().minuteOfDay;
+    this.applySkyCycle(now, true);
+    this.ui.updateStats(this.simulation.getStats());
+    this.renderer.render(this.scene, this.camera);
+  }
+
   dispose(): void {
     this.running = false;
     cancelAnimationFrame(this.animationFrame);

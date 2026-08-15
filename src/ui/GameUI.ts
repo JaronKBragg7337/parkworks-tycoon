@@ -17,6 +17,7 @@ import {
 } from '../core/ParkGrid';
 import type { InfrastructureTool } from '../game/InfrastructureBuilder';
 import type { PlacementValidation } from '../game/PlacementSystem';
+import { isParkOpen } from '../core/dayCycle';
 import { icon } from './icons';
 
 export interface ResumeSummary {
@@ -274,7 +275,13 @@ export class GameUI {
     this.cleanlinessElement.textContent = `${cleanliness}%`;
     this.cleanlinessFill.style.width = `${cleanliness}%`;
     this.cleanlinessFill.dataset.level = cleanliness < 45 ? 'low' : cleanliness < 75 ? 'medium' : 'high';
-    this.timeElement.textContent = `Day ${stats.day} · ${timeLabel(stats.minuteOfDay)}`;
+    // The clock says whether the park is trading, because an empty park at
+    // 22:00 is the gates being shut rather than anything having gone wrong.
+    const open = isParkOpen(stats.minuteOfDay);
+    this.timeElement.textContent = open
+      ? `Day ${stats.day} · ${timeLabel(stats.minuteOfDay)}`
+      : `Day ${stats.day} · ${timeLabel(stats.minuteOfDay)} · Closed`;
+    this.timeElement.classList.toggle('is-closed', !open);
 
     const served = Math.min(25, stats.guestsServed);
     const clean = cleanliness >= 75;
@@ -300,6 +307,18 @@ export class GameUI {
         break;
       case 'insufficient-funds':
         this.toast(`Need ${money(event.required)}`, 'warning');
+        break;
+      case 'park-closed':
+        this.toast('The gates are closed for the night', 'neutral');
+        break;
+      case 'day-settled':
+        // The one moment in a park day that is purely good news, so it gets the
+        // breakdown rather than a bare number: the player should be able to see
+        // which part of running the place earned it.
+        this.toast(
+          `Day ${event.day - 1} settled +${money(event.total)} · ${money(event.standing)} reputation, ${money(event.share)} takings`,
+          'positive',
+        );
         break;
       default:
         break;

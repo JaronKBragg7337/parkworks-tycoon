@@ -577,3 +577,7 @@ kbd { padding: 2px 5px; color: var(--ink); border: 1px solid var(--line); border
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .001ms !important; }
 }
+
+/* The clock while the gates are shut. Amber rather than the usual muted text,
+   so an empty park at night reads as closed instead of broken. */
+#time-stat.is-closed { color: var(--amber); font-weight: 700; }

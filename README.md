@@ -1,103 +1,157 @@
 # Parkworks Tycoon
 
-[Play Parkworks Tycoon](https://jaronkbragg7337.github.io/parkworks-tycoon/) —
-public, no login, and no installation required.
+**[Play it now](https://jaronkbragg7337.github.io/parkworks-tycoon/)** — in a
+browser, on a phone, no login and nothing to install.
 
-Parkworks Tycoon is a mobile-friendly 3D amusement-park management game for the
-web. Walk the park yourself, construct attractions and services, earn money
-from guests, and keep litter under control before cleanliness damages the
-park's reputation.
+Parkworks Tycoon is a mobile-first 3D amusement-park management game for the
+web. You do not hover above the park issuing orders: you **walk around inside
+it**. Build rides and food stalls, draw the paths that connect them, set what
+everything charges, and pick up the litter your guests drop — then watch the
+gates close at dusk and the day's takings settle overnight.
 
-This repository is the standalone game build. It is deliberately separate from
-Heartbeat Observatory until the gameplay slice and mobile performance are
-validated. Its production bundle uses relative paths so it can later be copied
-under `heartbeat-observatory/games/parkworks-tycoon/` without changing source.
+Built with Three.js and TypeScript. Every asset is generated procedurally in
+code; there are no downloaded models.
 
-## Playable systems
+Also playable inside Heartbeat Observatory at
+[/games/parkworks/](https://www.heartbeatobservatory.com/games/parkworks/),
+where a signed-in player's park is saved to their account instead of their
+browser.
 
-- Third-person walking with WASD/arrow keys and mouse/pointer look.
-- Dynamic touch stick: the left half of the screen is invisible at rest; touch
-  it to reveal the stick under the thumb. The right side remains available for
-  camera look, and pointer release/cancel immediately clears movement.
-- Build catalog with three food stations, five rides, three staffed facilities,
-  waste services, benches, shielded lamps, and mature shade trees.
-- Buy seven adjacent land parcels, then draw sidewalks and park roads in
-  one-metre touch-friendly strokes. Construction is quoted before confirmation,
-  and parcels unlock only from land you already own.
-- Grid-snapped object construction with owned-land checks, path conflicts,
-  footprint collision, rotation, confirmation, cancellation, and refunds.
-- Deterministic guests with hunger, fun, bladder, rest, happiness, queuing,
-  facility capacity, service time, spending, and departure states.
-- Guests travel the connected road/sidewalk graph from the front gate. They do
-  not target, queue at, or generate revenue from a disconnected attraction;
-  drawing a route to a prebuilt facility activates it immediately.
-- Food packaging becomes carried waste. Guests find a nearby bin or drop litter;
-  the player cleans litter by walking close to it. Cleanliness changes live.
-- Park cash, construction expense, upkeep, revenue, reputation, attendance,
-  day clock, and opening objectives. Attendance is limited by what the park can
-  attract rather than by a fixed ceiling, and reputation tracks how guests
-  actually leave, so neither stat stops moving as the park grows.
-- One-metre nudge buttons beside Rotate, because a fingertip covers several
-  metres of ground and the last metre of alignment has to be precise.
-- Parks save themselves and resume where you left off. The store is chosen by
-  the page: a host site can supply its own (a Heartbeat account, say), and the
-  standalone build falls back to this browser. Saves are self-contained
-  documents, so a park is portable rather than tied to one device.
-- An away report on return, projected from the park's own service rates: guests,
-  revenue, upkeep, litter dropped with nobody there to clean it, and the
-  reputation swing. Offline time is credited up to eight hours.
-- Already-placed buildings can be selected, turned, moved, or sold back at 70%.
-  A ground arrow marks the side guests approach from, both while placing and
-  while editing, so a thumb over the model never hides which way it faces.
+---
+
+## What you actually do
+
+**Walk your park.** Third-person on desktop with WASD and pointer look; on a
+phone the left half of the screen is an invisible stick that appears under your
+thumb and vanishes when you let go, with the right half for looking around.
+There is an overview camera when you want to see the whole site.
+
+**Build it.** Buy adjacent land parcels, draw sidewalks and roads in
+touch-friendly one-metre strokes, then place buildings on grid-snapped
+footprints with rotation, one-metre nudge buttons, and a ground arrow showing
+which side guests walk in from. Everything is quoted before you confirm, and
+anything already built can be moved, turned, or sold back at 70%.
+
+**Guests only visit what they can reach.** Attractions with no path to the front
+gate are ignored entirely — no queue, no revenue — and connecting one brings it
+to life immediately.
+
+**Run it as a business.** Guests arrive carrying money and spend it down. You set
+the price of everything that charges, and what you can get away with is governed
+by your reputation: a park nobody rates can charge three quarters of the standard
+rate, a perfect one can charge double. Push past that and guests walk past the
+queue — which lowers reputation, which lowers what you can charge. Nothing
+punishes greed directly; the loop closes on its own.
+
+**Keep it clean.** Food comes with packaging. Guests look for a nearby bin and
+drop litter when they cannot find one, and litter drags cleanliness down, which
+drags reputation down. Walk over it to clear it.
+
+**Close up and get paid.** The park trades from 9:00 to 21:00, then the gates
+shut, the crowd files out, and the books settle: a fixed subsidy, a share paid on
+reputation, and a cut of the day's own takings.
+
+**Leave and come back.** Your park keeps running while you are gone and reports
+what happened — guests, revenue, upkeep, litter nobody was there to clear, and
+the reputation swing. Offline hours are credited up to eight, are counted only
+while the gates would have been open, and are deliberately tuned to earn
+slightly *less* than playing, so closing the tab is never the better move.
+
+## What is in it
+
+**Rides** — Willow Line Railway ($1,150), Constellation Carousel ($1,850),
+Voltage Bumper Hall ($2,450), Aurora Sky Wheel ($3,200), Copper Corsair pirate
+ship ($3,350), Pulse Drop Tower ($3,950), and the Meteor Chase coaster ($5,600).
+
+**Food** — Citrus Press drinks, Moon Scoop Creamery, Copper Bun Kitchen burgers,
+and the Ember Stone Pizzeria, from $460 to $1,450 and charging $19 to $52 a head.
+
+**Facilities** — comfort station, first aid, information booth, sorting bins, and
+a cash machine that lets guests top up (and takes a fee for it).
+
+**Park details** — benches, shielded lamps, copper beeches, blossom planters, and
+a tiered bronze fountain. Decoration has an **appeal radius**: it flatters what
+it stands beside rather than the park in general, so where you put it matters.
+
+**A full day/night cycle** — a keyframed sun, sky, and fog across all
+twenty-four hours, with every lamp in the park coming up together at dusk and
+the small hours staying moonlit rather than black, because you still walk the
+park while it is shut.
+
+**Saves that follow you** — a park is a self-contained document, not a slot tied
+to one device. The page decides where it lives: a host site can supply its own
+store (a Heartbeat account, say) and the standalone build falls back to this
+browser. There is a start-over button behind two confirmations.
 
 ## Art and fidelity
 
-Assets are built procedurally in metres from visibly assembled components.
-Hero assets include primary silhouettes, secondary frames/bracing/panels, and
-tertiary fasteners, vents, seams, hinges, conduits, trim, and decals. Carousel
-and sky-wheel pivots are animated; repeated ride parts use instancing. Shadows
-are selective and phone pixel density is capped.
+Assets are built procedurally in metres from visibly assembled components. Hero
+assets carry primary silhouettes, secondary frames, bracing and panels, and
+tertiary fasteners, vents, seams, hinges, conduits, trim and decals. Ride pivots
+are animated and repeated parts use instancing. Shadows are selective and phone
+pixel density is capped.
 
 Materials use physically calibrated roughness and metalness, consistent
-metre-scaled UVs, procedural micro/macro variation as an immediate fallback,
-and compressed ambientCG CC0 texture maps for grass, paving, concrete, timber,
-and bark. Full sources and transformations are in
+metre-scaled UVs, procedural micro and macro variation as an immediate fallback,
+and compressed ambientCG CC0 texture maps for grass, paving, concrete, timber and
+bark. Full sources and transformations are in
 [ASSET_PROVENANCE.md](ASSET_PROVENANCE.md).
 
-## What is next
+## Running it
 
-[docs/NEXT.md](docs/NEXT.md) carries the working state: what has shipped, the
-direction, the Heartbeat Observatory and Supabase steps to take first, and the
-known gaps. Read it before picking the project up cold.
+Requirements: Node.js 24+ and npm.
 
-## Local development
-
-Requirements: Node.js 24+ (or Bun) and npm.
-
-```powershell
+```bash
 npm install
+```
+
+```bash
 npm run dev
 ```
 
-Production verification:
+The gate before anything ships:
 
-```powershell
+```bash
 npm run check
 ```
 
-`npm run check` runs deterministic simulation/input/asset tests, strict
-TypeScript, and the Vite production build. `npm run preview` serves the output.
+That runs the test suite, strict TypeScript, and the production build. `npm run
+preview` serves the built output.
 
-## Hosting later in Heartbeat Observatory
+## How the code is arranged
 
-Do not copy source or `node_modules`. After `npm run build`, copy the contents
-of `dist/` into `games/parkworks-tycoon/` in the Heartbeat Observatory repo and
-add the game to its existing game index. Verify the exact production URL from a
-390 × 844 phone viewport before publishing the integration.
+| Path | What lives there |
+| --- | --- |
+| `src/core/` | The simulation and its rules — guests, economy, clock, saves. No Three.js, no DOM, so it is all directly testable. |
+| `src/world/` | Procedural geometry, materials, and the sky cycle. |
+| `src/game/` | The bridge: scene, camera, placement, and the game loop. |
+| `src/ui/` | HUD, build catalog, park office, and the icon set. |
+| `src/controls/` | Input, joystick, and camera maths. |
+| `tests/` | Vitest suites, mostly against `src/core` maths rather than the renderer. |
+| `docs/` | `NEXT.md` is the live working state — read it first when picking this up cold. |
 
-## License
+Two rules worth knowing before changing the economy:
+
+- **Rates that govern a visit live once**, in `src/core/needRates.ts`, and both
+  the live simulation and the offline projection import them. They used to be
+  copied into both and drifted, which is what made guests stop riding.
+- **Measure, do not guess.** The wallet range, the ride relief, the offline
+  utilisation factor and the daily settlement were all set from measured runs,
+  and the numbers behind each are written next to the constant.
+
+## Deploying
+
+Pushing to `main` runs `npm run check` and publishes to GitHub Pages
+automatically.
+
+The copy inside Heartbeat Observatory is a **build artifact**, not source. To
+refresh it, run `npm run build` here and copy `dist/` into
+`heartbeat-observatory/games/parkworks/`, keeping that directory's
+`hb-save-backend.js` and re-applying the two script tags its README documents.
+
+## Licence
 
 Original project code and procedural art are dedicated to the public domain
-under [CC0 1.0](LICENSE). Three.js is consumed as an MIT-licensed npm dependency.
-Third-party texture assets remain CC0 and are individually documented. The
-compiled distribution includes [third-party notices](public/THIRD_PARTY_NOTICES.md).
+under [CC0 1.0](LICENSE). Three.js is consumed as an MIT-licensed npm dependency,
+third-party textures remain CC0 and are individually documented, and the compiled
+distribution ships [third-party notices](public/THIRD_PARTY_NOTICES.md).
