@@ -108,6 +108,14 @@ const UPKEEP_INTERVAL_SECONDS = 45;
  */
 export { REAL_SECONDS_PER_PARK_DAY };
 
+/**
+ * Pieces of litter one janitor clears per second, measured from live play with a
+ * backlog to work through. It falls off as a park gets clean — a janitor with
+ * nothing to pick up spends the time walking — so used flat here it is an
+ * optimistic bound on a filthy park and near enough on a tidy one.
+ */
+const JANITOR_CLEARANCE_PER_SECOND = 0.15;
+
 /** ParkSimulation.recalculateCleanliness. */
 const CLEANLINESS_LOST_PER_LITTER = 0.045;
 
@@ -160,6 +168,11 @@ export interface AwayParkProfile {
   /** Bins and food outlets, used to estimate how much waste became litter. */
   binCount: number;
   foodCount: number;
+  /**
+   * Janitors on the payroll. Omitted means none, which is how this projection
+   * behaved before there was anyone to hire.
+   */
+  janitorCount?: number;
 }
 
 export interface AwayReport {
@@ -174,6 +187,8 @@ export interface AwayReport {
   upkeep: number;
   netCash: number;
   litterCreated: number;
+  /** Litter the crew cleared while nobody was watching. */
+  litterRemoved: number;
   daysPassed: number;
   /** Absolute values after the absence, ready to write back onto stats. */
   cleanliness: number;
@@ -192,6 +207,7 @@ export function createEmptyAwayProfile(): AwayParkProfile {
     },
     binCount: 0,
     foodCount: 0,
+    janitorCount: 0,
   };
 }
 
@@ -279,8 +295,24 @@ export function computeAwayProgress(
   const coverage = profile.foodCount > 0
     ? clamp01(profile.binCount / profile.foodCount)
     : 1;
-  const litterCreated = Math.max(0, Math.round(hungerServices * (1 - coverage)));
-  const cleanliness = clamp01(1 - (litterCount + litterCreated) * CLEANLINESS_LOST_PER_LITTER);
+  const dropped = Math.max(0, hungerServices * (1 - coverage));
+
+  // The crew works through the night. Guests stop dropping things at closing but
+  // a janitor does not clock off, which is why this is charged against the whole
+  // absence rather than only the trading part of it — and why coming back to a
+  // park that tidied itself overnight is what the wages are actually buying.
+  //
+  // Without this, a park left overnight came back exactly as filthy as one with
+  // no crew at all, while still paying them through `upkeepPerCycle`. Paying for
+  // a service that demonstrably does not happen is worse than not offering it.
+  const janitors = Math.max(0, Math.round(profile.janitorCount ?? 0));
+  const clearedCapacity = janitors * JANITOR_CLEARANCE_PER_SECOND * creditedSeconds;
+
+  const litterBefore = Math.max(0, litterCount);
+  const litterAfter = Math.max(0, litterBefore + dropped - clearedCapacity);
+  const litterCreated = Math.max(0, Math.round(litterAfter - litterBefore));
+  const litterRemoved = Math.max(0, Math.round(litterBefore - litterAfter));
+  const cleanliness = clamp01(1 - litterAfter * CLEANLINESS_LOST_PER_LITTER);
 
   const departures = departuresForSpending;
   // A guest leaves happy when the park could actually serve them and was clean.
@@ -310,6 +342,7 @@ export function computeAwayProgress(
     upkeep: roundedUpkeep,
     netCash: roundedRevenue - roundedUpkeep,
     litterCreated,
+    litterRemoved,
     daysPassed: Math.floor(creditedSeconds / REAL_SECONDS_PER_PARK_DAY),
     cleanliness,
     reputation: Math.max(0, Math.min(100, reputationAfter)),

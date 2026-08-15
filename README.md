@@ -45,7 +45,10 @@ punishes greed directly; the loop closes on its own.
 
 **Keep it clean.** Food comes with packaging. Guests look for a nearby bin and
 drop litter when they cannot find one, and litter drags cleanliness down, which
-drags reputation down. Walk over it to clear it.
+drags reputation down. Walk over it to clear it — or build a **Cleaning Crew**
+post and put a janitor on the payroll to walk the paths doing it for you. They
+work through the night too, so a park left overnight tidies itself. Wages are
+charged every upkeep cycle whether there is litter or not.
 
 **Close up and get paid.** The park trades from 9:00 to 21:00, then the gates
 shut, the crowd files out, and the books settle: a fixed subsidy, a share paid on
@@ -66,8 +69,18 @@ ship ($3,350), Pulse Drop Tower ($3,950), and the Meteor Chase coaster ($5,600).
 **Food** — Citrus Press drinks, Moon Scoop Creamery, Copper Bun Kitchen burgers,
 and the Ember Stone Pizzeria, from $460 to $1,450 and charging $19 to $52 a head.
 
-**Facilities** — comfort station, first aid, information booth, sorting bins, and
-a cash machine that lets guests top up (and takes a fee for it).
+**Facilities** — comfort station, first aid, information booth, sorting bins, a
+cash machine that lets guests top up (and takes a fee for it), and the Warden
+Yard Crew Post that employs a janitor.
+
+**Staff** — one janitor per crew post, walking the same paths guests do at
+2.2 m/s and only picking up what is genuinely within arm's reach. Staff are
+derived from the buildings that employ them rather than owned separately, so a
+park reloads with its crew standing at their posts instead of frozen mid-walk.
+Measured on a filthy 18-building park with no bins: **no crew 0% clean, one 61%,
+two 76%**. Past two it plateaus, because a little litter ends up further from a
+path than a janitor can reach — that is yours to collect, cutting across the
+grass where they cannot.
 
 **Park details** — benches, shielded lamps, copper beeches, blossom planters, and
 a tiered bronze fountain. Decoration has an **appeal radius**: it flatters what

@@ -797,6 +797,11 @@ export class ParkGame {
   private buildAwayProfile(): AwayParkProfile {
     const profile = createEmptyAwayProfile();
     profile.walletPerGuest = typicalWallet(this.simulation.getStats().reputation);
+    // Staff are derived from their posts, so counting the posts counts the crew.
+    profile.janitorCount = this.placedObjects.filter(
+      (placed) => placed.spec.staff === 'janitor'
+        && placed.object.userData.connected !== false,
+    ).length;
     const revenueWeighted: Record<ServicedNeed, number> = { hunger: 0, fun: 0, bladder: 0, rest: 0 };
     const acceptanceWeighted: Record<ServicedNeed, number> = { hunger: 0, fun: 0, bladder: 0, rest: 0 };
     const contributions: AppealContribution[] = this.placedObjects.map((placed) => ({

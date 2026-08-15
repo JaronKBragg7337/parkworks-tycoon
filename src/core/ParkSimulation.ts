@@ -195,6 +195,8 @@ export interface ParkSimulationSaveState {
  */
 export interface AwayProgress {
   netCash: number;
+  /** Litter the crew cleared while nobody was watching. */
+  litterRemoved: number;
   revenue: number;
   upkeep: number;
   guestsVisited: number;
@@ -473,6 +475,22 @@ export class ParkSimulation {
       cleanliness: clamp01(report.cleanliness),
       day: this.stats.day + report.daysPassed,
     };
+
+    // The crew cleared a backlog overnight, so the wrappers have to actually
+    // leave the ground. Reporting them gone while they are still lying there
+    // would be the report and the park disagreeing about the same park — and the
+    // player would walk out into the mess the summary just told them was dealt
+    // with. Oldest first, which is the order a janitor works a park in.
+    if (report.litterRemoved > 0) {
+      const oldest = [...this.litter.values()].sort((a, b) => b.age - a.age);
+      for (let index = 0; index < report.litterRemoved && index < oldest.length; index += 1) {
+        const item = oldest[index];
+        if (!item) break;
+        this.litter.delete(item.id);
+        this.stats = { ...this.stats, litterCleaned: this.stats.litterCleaned + 1 };
+        this.emit({ type: 'litter-removed', litterId: item.id, byPlayer: false });
+      }
+    }
 
     const spots = [...this.facilities.values()].filter(
       (facility) => facility.enabled && getPlaceableSpec(facility.kind).category === 'food',

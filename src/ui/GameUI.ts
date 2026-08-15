@@ -385,6 +385,7 @@ export class GameUI {
       ['Net', `${report.netCash < 0 ? '-' : '+'}${money(Math.abs(report.netCash))}`],
     ];
     if (report.litterCreated > 0) rows.push(['Litter dropped', `${report.litterCreated}`]);
+    if (report.litterRemoved > 0) rows.push(['Crew cleared', `${report.litterRemoved}`]);
     rows.push(['Cleanliness', `${Math.round(report.cleanliness * 100)}%`]);
 
     // Reputation can move a long way over a long absence. Showing only the new
@@ -409,8 +410,11 @@ export class GameUI {
     if (report.capped) {
       notes.push(`Only the first ${describeDuration(report.creditedSeconds)} counted.`);
     }
-    if (report.litterCreated > 0) {
+    if (report.litterCreated > 0 && report.litterRemoved === 0) {
       notes.push('Nobody was there to clean up.');
+    }
+    if (report.litterRemoved > 0) {
+      notes.push('Your crew worked through the night.');
     }
     note.textContent = notes.join(' ');
     panel.hidden = false;

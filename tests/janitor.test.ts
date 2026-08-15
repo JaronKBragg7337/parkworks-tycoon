@@ -3,6 +3,8 @@ import { ParkGrid } from '../src/core/ParkGrid';
 import { ParkSimulation } from '../src/core/ParkSimulation';
 import { getPlaceableSpec, requiresPathAccess } from '../src/core/catalog';
 import type { FacilitySnapshot, LitterSnapshot, PlaceableKind, Vec2 } from '../src/core/types';
+import type { ParkStats } from '../src/core/types';
+import { computeAwayProgress, createEmptyAwayProfile } from '../src/core/awayReport';
 
 function facility(
   id: string,
@@ -259,5 +261,63 @@ describe('the cleaning crew', () => {
       stats: { ...simulation.getStats() },
     });
     expect(snapshot(run(555, messyPark(2), 200))).toEqual(snapshot(run(555, messyPark(2), 200)));
+  });
+});
+
+describe('the crew while nobody is watching', () => {
+  const stats: ParkStats = {
+    cash: 0, reputation: 50, cleanliness: 0.3, guestCount: 0, guestsServed: 0,
+    guestsVisited: 0, litterCleaned: 0, revenue: 0, expenses: 0, day: 1, minuteOfDay: 540,
+  };
+
+  function profileWith(janitorCount: number) {
+    const profile = createEmptyAwayProfile();
+    profile.appeal = 200;
+    profile.janitorCount = janitorCount;
+    profile.foodCount = 4;
+    profile.binCount = 0;
+    profile.needs.hunger = { throughput: 0.6, revenuePerService: 30, acceptance: 1 };
+    return profile;
+  }
+
+  it('leaves a park dirtier without a crew than with one', () => {
+    const alone = computeAwayProgress(stats, profileWith(0), 3600, 40)!;
+    const staffed = computeAwayProgress(stats, profileWith(2), 3600, 40)!;
+    expect(staffed.cleanliness).toBeGreaterThan(alone.cleanliness);
+    expect(staffed.litterCreated).toBeLessThan(alone.litterCreated);
+  });
+
+  it('clears a backlog it was left with, rather than only slowing the mess', () => {
+    // Paying wages through the night and coming back to the same heap was the
+    // bug: the crew was on the payroll offline and did nothing for it.
+    const staffed = computeAwayProgress(stats, profileWith(3), 3600, 40)!;
+    expect(staffed.litterRemoved).toBeGreaterThan(0);
+    expect(staffed.cleanliness).toBeGreaterThan(0.5);
+  });
+
+  it('does nothing at all for a park with no crew', () => {
+    const alone = computeAwayProgress(stats, profileWith(0), 3600, 40)!;
+    expect(alone.litterRemoved).toBe(0);
+  });
+
+  it('actually takes the litter off the ground, not just off the report', () => {
+    const simulation = new ParkSimulation(88);
+    simulation.setFacilities([]);
+    simulation.loadSaveState({
+      ...simulation.getSaveState(),
+      litter: Array.from({ length: 30 }, (_, index) => ({
+        id: `old-${index}`,
+        position: { x: index, z: 0 },
+        variant: 0,
+        age: index,
+      })),
+    });
+    expect(simulation.getLitter().length).toBe(30);
+
+    const report = computeAwayProgress(simulation.getStats(), profileWith(3), 3600, 30)!;
+    expect(report.litterRemoved).toBeGreaterThan(0);
+    simulation.applyAwayProgress(report);
+    // The summary said the crew cleared it; the park has to agree.
+    expect(simulation.getLitter().length).toBeLessThan(30);
   });
 });
