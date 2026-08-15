@@ -9,10 +9,13 @@ import {
   NEED_RELIEF_PER_SERVICE,
 } from './needRates';
 import {
+  TOP_UP_THRESHOLD,
+  WITHDRAWAL_MULTIPLE,
   acceptanceRate,
   priceFor,
   sanitizePriceBook,
   startingWallet,
+  typicalWallet,
   type PriceBook,
 } from './pricing';
 import { SeededRandom } from './random';
@@ -597,6 +600,17 @@ export class ParkSimulation {
     needs.sort((a, b) => b[1] - a[1]);
     const [need, urgency] = needs[0] ?? [null, 0];
 
+    // Money is not a need — it is what makes the others actionable. A guest
+    // running low goes for a top-up before their wallet decides their afternoon
+    // for them, which is why the threshold sits well above the point of being
+    // stranded rather than at zero.
+    if (
+      guest.wallet < typicalWallet(this.stats.reputation) * TOP_UP_THRESHOLD &&
+      this.seekFacility(guest, 'cash')
+    ) {
+      return;
+    }
+
     if (need && urgency > NEED_PRIORITY_THRESHOLD && this.seekFacility(guest, need)) return;
     if (
       guest.needs.fun > FUN_RECONSIDER_THRESHOLD &&
@@ -652,6 +666,10 @@ export class ParkSimulation {
   private willPay(guest: GuestRuntime, kind: PlaceableKind): boolean {
     const price = priceFor(kind, this.prices);
     if (price <= 0) return true;
+    // The one place affordability cannot apply: a cash machine's fee comes out
+    // of the money it hands over. Requiring the fee up front would lock the
+    // broke guest out of the only thing that could help them.
+    if (getPlaceableSpec(kind).serviceNeed === 'cash') return true;
     if (price > guest.wallet) return false;
     const accepted = acceptanceRate(kind, this.prices, this.stats.reputation);
     return accepted >= 1 || guest.priceSensitivity < accepted;
@@ -730,6 +748,13 @@ export class ParkSimulation {
       case 'information':
         guest.happiness = clamp01(guest.happiness + 0.035);
         guest.needs.fun = Math.max(0.18, guest.needs.fun - 0.16);
+        guest.decisionTimer = 0;
+        break;
+      case 'cash':
+        // The top-up lands before the fee is taken below, which is both how a
+        // cash machine actually works and what stops a guest with nothing from
+        // being unable to afford the withdrawal that would rescue them.
+        guest.wallet += Math.round(typicalWallet(this.stats.reputation) * WITHDRAWAL_MULTIPLE);
         guest.decisionTimer = 0;
         break;
       case 'trash':

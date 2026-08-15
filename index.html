@@ -8,6 +8,15 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <title>Parkworks Tycoon</title>
+    <!-- Inline SVG rather than a file: the built page is copied into Heartbeat
+         Observatory as a standalone directory, and an icon that travels inside
+         the HTML cannot be left behind by that copy. The mark is the park gate
+         arch over a path, in the game's own mint and night colours. -->
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2307171a'/%3E%3Cpath d='M14 46V30a18 18 0 0 1 36 0v16' fill='none' stroke='%2370e3b3' stroke-width='6' stroke-linecap='round'/%3E%3Crect x='28' y='34' width='8' height='14' rx='1.5' fill='%23f0b55a'/%3E%3C/svg%3E"
+    />
   </head>
   <body>
     <div id="app"></div>
