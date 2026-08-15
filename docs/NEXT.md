@@ -3,6 +3,59 @@
 Working state as of 2026-08-14. Read this first if you are picking the project
 up cold.
 
+## Handoff, 2026-08-14 evening
+
+Everything below is committed and pushed to `main`; Pages is green. **180 tests
+pass, `npm run check` is the gate.** Nothing is half-finished — the next person
+can start anywhere.
+
+**Shipped today:** the ride bug fixed and its constants unified in
+`needRates.ts`; pricing gated by reputation with a Park office tab; start-over
+behind two confirmations; per-guest charges shown on cards and in the inspector;
+**guest wallets**; the **cash machine** that tops them up; **six new placeables**
+and a **scenery appeal radius**; Parkworks vendored into Heartbeat Observatory at
+`/games/parkworks/` with cloud saves; a shared `hb-supabase.js`; anonymous
+sign-ins enabled with public content guarded behind `is_real_account()`.
+
+### The next three, in order
+
+1. **End-of-day report.** Not started. Gives the day counter meaning and a
+   natural autosave beat, and it is the moment to revisit the 3.4-minute park
+   day. It should report what wallets produced: takings, guests served, and how
+   many left without spending.
+2. **Staff** — janitor, mechanic, entertainer. Litter is still only removable by
+   the player walking over it. Wages create the cash-flow pressure that makes
+   the pricing lever bite from the other side. Pathfinding already exists.
+3. **Multi-park chain layer.** `computeAwayProgress` already models a park
+   running unwatched, which is most of what "park A while you stand in park B"
+   needs.
+
+### Two things worth knowing before you touch the economy
+
+- **The wallet range in `pricing.ts` is load-bearing and was measured, not
+  chosen.** At 55-175 it silently undid the ride fix, because a guest who cannot
+  afford a second ride is indistinguishable from one who does not want one. If
+  you change `WALLET_MIN`/`WALLET_MAX`, re-measure rides per guest at standard
+  prices; it must stay near 2.3.
+- **A too-expensive park is not the same as a well-priced one.** Past about
+  1.7x, acceptance hits zero, nobody buys, and every downstream behaviour
+  (wallet drain, cash machine use, litter) goes quiet. Test economy changes
+  somewhere between 1.0x and 1.5x, not at 3x.
+
+### Known, unfixed, newly noticed
+
+- **`mini-railway` needs 120 m², the largest footprint of any ride except the
+  coaster — despite being the cheapest at $1,150.** It is meant to be the
+  affordable early ride, but the starter parcel probably cannot hold it, so the
+  cheapest ride may be unbuildable until the player buys land. Either shrink the
+  circuit or accept it as a land-expansion prompt, deliberately.
+- The favicon is now inlined in `index.html` as an SVG data URI, so the built
+  copy carries it. Heartbeat's copy needs a rebuild to pick it up.
+- Cloud saves are verified only **signed out** (local fallback). The signed-in
+  path — a real row in `parkworks_saves`, resuming on another device — has never
+  been exercised.
+- The bullets under "Known and unfixed" further down still stand.
+
 ## Done since this file was last written
 
 All four items reported from play on 2026-08-14 are shipped. 134 tests pass.
